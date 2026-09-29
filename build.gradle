@@ -44,7 +44,8 @@ configurations.include.dependencies.addAllLater(provider {
 		.collect { dependencies.create(it.moduleVersion.id.toString()) }
 })
 
-// Headless server game tests (src/gametest) run as part of `./gradlew build`.
+// Game tests (src/gametest): the headless server tests run as part of `./gradlew build`;
+// the client test needs a display and is opt-in (`./gradlew runClientGameTest`).
 fabricApi {
 	configureTests {
 		createSourceSet = true
