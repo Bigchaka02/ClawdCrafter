@@ -1,7 +1,7 @@
 # gradle
 
 .gradle/
-build/
+/build/
 out/
 classes/
 
@@ -38,3 +38,6 @@ hs_err_*.log
 replay_*.log
 *.hprof
 *.jfr
+
+# claude code
+.claude/worktrees/
