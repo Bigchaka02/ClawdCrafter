@@ -59,9 +59,20 @@ The **Build rule** button, on the right of Preview, sets what Generate does with
 |---|---|
 | **Clear volume** (default) | Clears out all the blocks in the constraints and turns them to empty air before building. |
 | **Replace blocks with build** | Makes the build completely but doesn't clear everything beforehand. It only replaces the existing blocks with the blocks that exist in the projected build, including the build's own open spaces such as room interiors and doorways. |
-| **Build only where possible** | Places parts of the projected build wherever there is an empty air block available, without replacing or deleting anything that already exists. |
+| **Build only where possible** | Places parts of the projected build wherever there is an empty air block available, without replacing or deleting anything that already exists. Air here also covers things you'd walk through or break by accident: grass, flowers, snow, liquids, torches and crops. |
 
 The rule is applied when you press Generate, so you can switch rules after previewing without asking Claude again.
+
+### What happens to things already in the build space
+
+- **Blocks are broken, not deleted.** Every existing block that gets removed or replaced drops its normal loot, as if you had broken it by hand. That includes seeds from grass, torches and chest contents.
+  - Everything is collected and merged into stacks, which pop out on top of the ClawdCrafter block when the build finishes.
+  - Items already lying in the build space are collected the same way.
+  - Liquids are simply replaced. Bedrock, portals, command blocks and other unbreakable blocks are never touched.
+- **Falling blocks:** sand, gravel, anvils or concrete powder resting on the top edge of the build space are broken into items when the build would leave them unsupported. Anything that still falls into the site is caught and turned into an item.
+- **Mobs, players, boats and minecarts** left inside new blocks are lifted to the nearest free space above. For example, a cow standing where the floor goes ends up standing on the floor.
+- **Item frames and paintings** that lose the wall they hang on drop as items.
+- **Lag protection:** if a huge clear (e.g. 64³ of solid stone) would drop more than 256 stacks, the most plentiful items are discarded first. The chat message says how many.
 
 ![Build rule toggle](docs/screenshots/build-rule.png)
 
@@ -94,7 +105,9 @@ Chat messages tell you when a preview is ready, when a build is placed or finish
 6. **Place** (`build/BuildPlacer.enqueue`): **Generate** places the pending build, rotated to face the player and bottom-up, `blocksPerTick` at a time. The `build/BuildRule` decides what happens to existing blocks:
    - **Clear volume**: cells outside the build become air.
    - **Replace**: cells outside the build are left alone.
-   - **Only where possible**: a block is placed only if its spot is air when its turn comes.
+   - **Only where possible**: a block is placed only if its spot is air (or grass, flowers, snow, a liquid, a torch...) when its turn comes.
+   - Replaced blocks are broken into loot (`build/DropPool` merges it).
+   - Gravity columns above the top edge are broken, falling blocks in the site are caught, stuck entities are lifted, and unsupported frames and paintings are dropped.
 
 ## Build from source
 
@@ -105,9 +118,10 @@ Chat messages tell you when a preview is ready, when a build is placed or finish
 ./gradlew runClientGameTest  # real-client visual test; needs a display, not part of build
 ```
 
-The game tests (`src/gametest`) don't need an API key. They check four things:
+The game tests (`src/gametest`) don't need an API key. They check five things:
 - Placement, rotation and block rejection, using a hand-written plan.
-- Each build rule, against blocks already in the world.
+- Each build rule, against blocks already in the world, including broken blocks and chest contents dropping as items.
+- Sand with an anvil on the top edge being broken instead of falling in, and a pig standing where the floor goes being lifted onto it.
 - That the preview packet survives encoding and matches the real placement and boundary.
 - That the bundled SDK builds a request (schema, model, effort, fallbacks) and parses a response offline.
 
@@ -141,6 +155,6 @@ docs/PLAN.md                   research notes + implementation plan
 - Builds can include any non-operator block, including TNT, lava and fire. Use `opOnly` on public servers.
 - The preview is only on your client, and only one at a time.
 - A pending preview is not saved: after a server restart, press Preview again.
-- If the server restarts in the middle of a build, that build is dropped.
+- If the server restarts in the middle of a build, that build is dropped, along with any items collected so far.
 - Unfinished builds are not saved.
 - No license has been chosen yet.

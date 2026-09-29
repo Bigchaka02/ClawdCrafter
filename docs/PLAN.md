@@ -76,3 +76,13 @@
   - The system prompt asks Claude to mark open spaces with explicit air boxes.
   - The config option `clearVolume` is replaced by this per-block rule, which is saved on the block entity.
 - Game tests check each rule against pre-placed blocks.
+
+## 6. Iteration 4 — safe placement
+- Build only where possible also builds over "soft" blocks: air, replaceable blocks, liquids, snow, and instant-break blocks with no collision (flowers, torches, crops...).
+- Every removed or replaced non-air block is broken for its loot (`Block.getDrops`, no XP or silverfish). Container contents spill via vanilla and are swept up. Liquids are just replaced. Unbreakable blocks are never touched. Beds whose foot goes first still drop.
+- Drops, plus loose items in the site, are merged in `DropPool` and dropped on the ClawdCrafter block. Beyond 256 stacks, the most plentiful items are discarded (lag guard).
+- Gravity:
+  - When a top-edge cell ends up open, the column of `Fallable` blocks above it is broken.
+  - Every tick, `FallingBlockEntity`s in the site become items.
+- Entities: every tick, entities stuck in blocks inside the volume are lifted to the first free space. At the end, frames and paintings that no longer survive drop.
+- Game tests cover each rule (drops, chest contents, soft blocks) plus gravity and mob lifting. Disabling either safeguard makes the test fail.

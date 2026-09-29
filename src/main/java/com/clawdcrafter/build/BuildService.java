@@ -100,7 +100,9 @@ public final class BuildService {
 		}
 		be.setPending(null);
 		be.setBuildRule(request.rule());
-		BuildPlacer.enqueue(player.level(), build, request.rule(), () -> say(player, "Finished \"%s\".".formatted(build.title())));
+		BuildPlacer.enqueue(player.level(), build, request.rule(), finished -> say(player, "Finished \"%s\".%s%s".formatted(build.title(),
+				finished.droppedStacks() > 0 ? " Items from broken blocks were dropped on the ClawdCrafter block." : "",
+				finished.discardedStacks() > 0 ? " (%d stacks of bulk blocks were over the limit and discarded.)".formatted(finished.discardedStacks()) : "")));
 		// Translatable, so the rule name comes from the client's language file (servers don't load mod lang files).
 		say(player, Component.literal("Placing \"%s\": %d blocks — ".formatted(build.title(), build.blockCount()))
 				.append(Component.translatable("gui.clawdcrafter.rule." + request.rule().key())));

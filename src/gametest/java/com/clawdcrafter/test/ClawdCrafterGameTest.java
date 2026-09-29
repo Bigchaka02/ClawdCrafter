@@ -22,6 +22,14 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.EntityTypes;
+import net.minecraft.world.entity.animal.pig.Pig;
+import net.minecraft.world.entity.item.FallingBlockEntity;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.Container;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.StairBlock;
@@ -50,7 +58,7 @@ public class ClawdCrafterGameTest {
 	public void placesRotatedBuild(GameTestHelper helper) {
 		PreparedBuild build = prepare(helper);
 		helper.assertValueEqual(build.skipped(), 2, "skipped boxes");
-		helper.assertValueEqual(BuildPlacer.enqueue(helper.getLevel(), build, BuildRule.REPLACE, () -> {}), 10, "placed blocks");
+		helper.assertValueEqual(BuildPlacer.enqueue(helper.getLevel(), build, BuildRule.REPLACE, finished -> {}), 10, "placed blocks");
 
 		helper.succeedWhen(() -> {
 			// Player facing east: local (x, y, z) -> anchor + (3 - z, y, x - 1).
@@ -84,35 +92,89 @@ public class ClawdCrafterGameTest {
 	}
 
 	/**
-	 * Existing blocks: gold sits in a cell the build doesn't use (local 0,1,0), diamond sits where the build
-	 * puts stone (local 0,0,0). Checks each rule's promise.
+	 * Existing blocks, then a build under {@code rule}:
+	 * <ul>
+	 *   <li>gold in a cell the build doesn't use (local 0,1,0),</li>
+	 *   <li>diamond where the build puts stone (local 0,0,0),</li>
+	 *   <li>a torch (on dirt) where the build puts stone (local 1,0,1) — soft, so every rule replaces it,</li>
+	 *   <li>a chest holding emeralds in another unused cell (local 1,1,0) — only Clear volume breaks it.</li>
+	 * </ul>
+	 * Whatever is removed must come back as items (chest contents included) on top of the ClawdCrafter block.
 	 */
-	private static void checkRule(GameTestHelper helper, BuildRule rule, Block expectGold, Block expectDiamond) {
+	private static void checkRule(GameTestHelper helper, BuildRule rule, Block expectGold, Block expectDiamond, Block... expectDrops) {
 		BlockPos gold = new BlockPos(5, 2, 3);
 		BlockPos diamond = new BlockPos(5, 1, 3);
+		BlockPos torch = new BlockPos(4, 1, 4);
+		BlockPos chest = new BlockPos(5, 2, 4);
 		helper.setBlock(gold, Blocks.GOLD_BLOCK);
 		helper.setBlock(diamond, Blocks.DIAMOND_BLOCK);
-		BuildPlacer.enqueue(helper.getLevel(), prepare(helper), rule, () -> {});
+		helper.setBlock(torch.below(), Blocks.DIRT);
+		helper.setBlock(torch, Blocks.TORCH);
+		helper.setBlock(chest, Blocks.CHEST);
+		((Container) helper.getLevel().getBlockEntity(helper.absolutePos(chest))).setItem(0, new ItemStack(Items.EMERALD, 5));
+		boolean chestBroken = rule == BuildRule.CLEAR_VOLUME;
+		boolean[] done = {false};
+		BuildPlacer.enqueue(helper.getLevel(), prepare(helper), rule, finished -> done[0] = true);
 		helper.succeedWhen(() -> {
-			helper.assertBlockPresent(Blocks.STONE, 4, 1, 4); // an empty stone cell is always filled
+			helper.assertTrue(done[0], "build finished");
+			helper.assertBlockPresent(Blocks.STONE, torch);
 			helper.assertBlockPresent(expectGold, gold);
 			helper.assertBlockPresent(expectDiamond, diamond);
+			for (Block drop : expectDrops) {
+				helper.assertTrue(droppedAtAnchor(helper, drop.asItem()), "expected a dropped " + drop);
+			}
+			helper.assertBlockPresent(chestBroken ? Blocks.AIR : Blocks.CHEST, chest);
+			helper.assertValueEqual(droppedAtAnchor(helper, Items.CHEST) && droppedAtAnchor(helper, Items.EMERALD), chestBroken,
+					"chest and its emeralds dropped");
 		});
+	}
+
+	/** Item entities on top of the ClawdCrafter block (anchor at relative 2,1,4). */
+	private static boolean droppedAtAnchor(GameTestHelper helper, Item item) {
+		AABB top = new AABB(helper.absolutePos(new BlockPos(2, 1, 4))).inflate(1.5);
+		return helper.getLevel().getEntitiesOfClass(ItemEntity.class, top).stream()
+				.anyMatch(entity -> entity.getItem().is(item));
 	}
 
 	@GameTest
 	public void ruleClearVolume(GameTestHelper helper) {
-		checkRule(helper, BuildRule.CLEAR_VOLUME, Blocks.AIR, Blocks.STONE);
+		checkRule(helper, BuildRule.CLEAR_VOLUME, Blocks.AIR, Blocks.STONE, Blocks.TORCH, Blocks.GOLD_BLOCK, Blocks.DIAMOND_BLOCK);
 	}
 
 	@GameTest
 	public void ruleReplace(GameTestHelper helper) {
-		checkRule(helper, BuildRule.REPLACE, Blocks.GOLD_BLOCK, Blocks.STONE);
+		checkRule(helper, BuildRule.REPLACE, Blocks.GOLD_BLOCK, Blocks.STONE, Blocks.TORCH, Blocks.DIAMOND_BLOCK);
 	}
 
 	@GameTest
 	public void ruleOnlyWherePossible(GameTestHelper helper) {
-		checkRule(helper, BuildRule.ONLY_WHERE_POSSIBLE, Blocks.GOLD_BLOCK, Blocks.DIAMOND_BLOCK);
+		checkRule(helper, BuildRule.ONLY_WHERE_POSSIBLE, Blocks.GOLD_BLOCK, Blocks.DIAMOND_BLOCK, Blocks.TORCH);
+	}
+
+	/**
+	 * Sand with an anvil on top rests on dirt in the top layer of the volume (local 1,1,0, which Clear volume
+	 * empties), and a pig stands where the stone floor goes. The sand and anvil must be broken into items
+	 * rather than fall in, and the pig must end up standing on the new floor, not inside it.
+	 */
+	@GameTest
+	public void gravityBlocksAndMobs(GameTestHelper helper) {
+		BlockPos sand = new BlockPos(5, 3, 4);
+		helper.setBlock(sand.below(), Blocks.DIRT); // top-edge cell the build clears
+		helper.setBlock(sand, Blocks.SAND);
+		helper.setBlock(sand.above(), Blocks.ANVIL);
+		Pig pig = helper.spawn(EntityTypes.PIG, new BlockPos(4, 1, 4));
+		boolean[] done = {false};
+		BuildPlacer.enqueue(helper.getLevel(), prepare(helper), BuildRule.CLEAR_VOLUME, finished -> done[0] = true);
+		helper.succeedWhen(() -> {
+			helper.assertTrue(done[0], "build finished");
+			helper.assertBlockPresent(Blocks.AIR, sand);
+			helper.assertBlockPresent(Blocks.AIR, sand.above());
+			helper.assertTrue(helper.getLevel().getEntitiesOfClass(FallingBlockEntity.class, new AABB(helper.absolutePos(sand)).inflate(4)).isEmpty(),
+					"nothing falling");
+			helper.assertTrue(droppedAtAnchor(helper, Items.SAND) && droppedAtAnchor(helper, Items.ANVIL), "sand and anvil dropped as items");
+			helper.assertTrue(pig.isAlive() && helper.getLevel().noCollision(pig, pig.getBoundingBox()), "pig is free");
+			helper.assertTrue(pig.getY() >= helper.absolutePos(new BlockPos(4, 2, 4)).getY(), "pig stands on the new floor");
+		});
 	}
 
 	/** The bundled SDK loads, derives the JSON schema from BuildPlan, and parses a response. */
