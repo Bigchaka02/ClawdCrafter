@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": ["OBO", "BDB", "OBO"],
+  "key": {
+    "O": "minecraft:orange_terracotta",
+    "B": "minecraft:black_concrete",
+    "D": "minecraft:diamond"
+  },
+  "result": { "id": "clawdcrafter:clawdcrafter", "count": 1 }
+}

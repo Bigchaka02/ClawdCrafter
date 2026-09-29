@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "clawdcrafter-test",
+  "version": "1.0.0",
+  "name": "ClawdCrafter Tests",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-gametest": [
+      "com.clawdcrafter.test.ClawdCrafterGameTest"
+    ]
+  }
+}

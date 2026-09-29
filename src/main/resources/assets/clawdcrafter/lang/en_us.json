@@ -1,0 +1,9 @@
+{
+  "block.clawdcrafter.clawdcrafter": "ClawdCrafter",
+  "gui.clawdcrafter.prompt": "Prompt",
+  "gui.clawdcrafter.prompt.hint": "Describe what to build…",
+  "gui.clawdcrafter.size_x": "Width (X)",
+  "gui.clawdcrafter.size_y": "Height (Y)",
+  "gui.clawdcrafter.size_z": "Depth (Z)",
+  "gui.clawdcrafter.generate": "Generate"
+}
