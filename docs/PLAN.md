@@ -8,7 +8,7 @@
 |---|---|---|
 | Minecraft version | Latest stable is **26.3** (Sep 2026). Since 26.1 the game ships unobfuscated, so mods use Mojang's official names directly. | Target 26.3. |
 | Mod loader | Fabric: Loader 0.19.5, Fabric API 0.161.0+26.3, Loom 1.18, Gradle 9.7.1, **Java 25**. Official `fabric-example-mod` has a `26.3` branch. | Fabric, scaffolded from the official template (no hand-rolled build). |
-| AI provider | Anthropic **Java SDK 2.66.0** (`com.anthropic:anthropic-java`). Model `claude-opus-5-5`: adaptive thinking always on, effort default `medium`, structured outputs (`output_config.format`), streaming for long output, server-side refusal fallback (`fallbacks: "default"`). | Official SDK, bundled into the mod jar (jar-in-jar). |
+| AI provider | Anthropic **Java SDK 2.66.0** (`com.anthropic:anthropic-java`). Default model `claude-sonnet-5-5` at effort `medium` (set explicitly, since Sonnet 5.5 defaults to `high`); adaptive thinking, structured outputs (`output_config.format`), streaming for long output, server-side refusal fallback (`fallbacks: "default"`). | Official SDK, bundled into the mod jar (jar-in-jar). |
 | Prior art | T2BM (IEEE CoG 2024) and BlockGPT use an LLM → JSON "interlayer" → blocks pipeline. | Same idea: Claude returns a JSON list of box-fill ops (like `/fill`), which is compact and Claude already knows `/fill` semantics. |
 | Parsing block strings | Vanilla `BlockStateParser` parses `minecraft:oak_stairs[facing=east]`. | Reuse it — no custom parser. |
 | Rotation | Vanilla `BlockPos.rotate(Rotation)` + `BlockState.rotate(Rotation)`. | Reuse — builds face the player. |
@@ -53,3 +53,10 @@
 - Texture is a simple hand-made pixel spark (swap `assets/clawdcrafter/textures/block/clawdcrafter.png`).
 - Crafting recipe is a placeholder (`data/clawdcrafter/recipe/clawdcrafter.json`).
 - No undo, no region-protection integration, no in-game config screen.
+
+## 4. Iteration 2 — preview flow
+- Default model: `claude-sonnet-5-5`, effort `medium`.
+- **Preview** (the old Generate button) asks Claude. The server keeps the result on the block entity and sends it to the player as a palette + run-length `Preview` packet.
+- The client draws semi-transparent ghost blocks. Once a preview exists, **Generate** appears beneath Preview and places exactly the pending build. **Clear** removes the ghosts; **Refresh** asks again with the same prompt.
+- A red outline shows the build volume: live while the screen is open (it follows X/Y/Z and your facing), and around the preview otherwise.
+- Shared `BuildVolume` math keeps the preview, the boundary and the real placement identical. A game test covers this.

@@ -1,6 +1,7 @@
 package com.clawdcrafter.block;
 
 import com.clawdcrafter.ClawdCrafter;
+import com.clawdcrafter.build.BuildPlacer.PreparedBuild;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -15,8 +16,9 @@ public class ClawdCrafterBlockEntity extends BlockEntity {
 	private int sizeX = DEFAULT_SIZE;
 	private int sizeY = DEFAULT_SIZE;
 	private int sizeZ = DEFAULT_SIZE;
-	/** Not saved: a restart simply drops the in-flight request. */
+	/** Not saved: a restart simply drops the in-flight request and the previewed build. */
 	private boolean busy;
+	private PreparedBuild pending;
 
 	public ClawdCrafterBlockEntity(BlockPos pos, BlockState state) {
 		super(ClawdCrafter.BLOCK_ENTITY, pos, state);
@@ -28,6 +30,9 @@ public class ClawdCrafterBlockEntity extends BlockEntity {
 	public int sizeZ() { return sizeZ; }
 	public boolean isBusy() { return busy; }
 	public void setBusy(boolean busy) { this.busy = busy; }
+	/** The last previewed build, placed by Generate. */
+	public PreparedBuild pending() { return pending; }
+	public void setPending(PreparedBuild pending) { this.pending = pending; }
 
 	public void setRequest(String prompt, int sizeX, int sizeY, int sizeZ) {
 		this.prompt = prompt;

@@ -16,7 +16,7 @@ public final class ClawdConfig {
 
 	/** Anthropic API key. Leave empty to use the ANTHROPIC_API_KEY environment variable. */
 	public String apiKey = "";
-	public String model = "claude-opus-5-5";
+	public String model = "claude-sonnet-5-5";
 	/** low | medium | high | xhigh | max — higher is slower and more detailed. */
 	public String effort = "medium";
 	/** Upper bound for each of the three dimensions (1..128). */

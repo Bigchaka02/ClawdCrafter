@@ -22,7 +22,7 @@ public class ClawdCrafterBlock extends BaseEntityBlock {
 	protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
 		if (player instanceof ServerPlayer serverPlayer && level.getBlockEntity(pos) instanceof ClawdCrafterBlockEntity be) {
 			ServerPlayNetworking.send(serverPlayer,
-					new Payloads.OpenScreen(pos, be.prompt(), be.sizeX(), be.sizeY(), be.sizeZ()));
+					new Payloads.OpenScreen(pos, be.prompt(), be.sizeX(), be.sizeY(), be.sizeZ(), be.isBusy()));
 		}
 		return InteractionResult.SUCCESS;
 	}

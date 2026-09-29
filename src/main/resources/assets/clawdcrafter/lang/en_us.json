@@ -5,5 +5,11 @@
   "gui.clawdcrafter.size_x": "Width (X)",
   "gui.clawdcrafter.size_y": "Height (Y)",
   "gui.clawdcrafter.size_z": "Depth (Z)",
-  "gui.clawdcrafter.generate": "Generate"
+  "gui.clawdcrafter.preview": "Preview",
+  "gui.clawdcrafter.generating": "Generating…",
+  "gui.clawdcrafter.generate": "Generate",
+  "gui.clawdcrafter.clear": "Clear",
+  "gui.clawdcrafter.refresh": "Refresh",
+  "gui.clawdcrafter.status.pending": "Asking Claude… you can close this screen.",
+  "gui.clawdcrafter.status.preview": "Previewing %s blocks"
 }
