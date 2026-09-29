@@ -8,6 +8,7 @@ import com.clawdcrafter.build.BuildPlacer;
 import com.clawdcrafter.build.BuildPlacer.PreparedBuild;
 import com.clawdcrafter.build.BuildRule;
 import com.clawdcrafter.build.BuildVolume;
+import com.clawdcrafter.build.DropPool;
 import com.clawdcrafter.config.ClawdConfig;
 import com.clawdcrafter.network.Payloads;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -30,11 +31,15 @@ import net.minecraft.world.Container;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BedPart;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 
 /** Headless server tests; run with `./gradlew build` (or `runGameTest`). No API key needed. */
 public class ClawdCrafterGameTest {
@@ -42,7 +47,9 @@ public class ClawdCrafterGameTest {
 			new Box("minecraft:stone", 0, 0, 0, 2, 0, 2, false),
 			new Box("minecraft:oak_stairs[facing=north]", 1, 1, 2, 1, 1, 2, false),
 			new Box("minecraft:not_a_block", 0, 1, 0, 0, 1, 0, false),
-			new Box("minecraft:command_block", 2, 1, 0, 2, 1, 0, false)));
+			new Box("minecraft:command_block", 2, 1, 0, 2, 1, 0, false),
+			new Box("minecraft:bedrock", 2, 1, 1, 2, 1, 1, false),
+			new Box("minecraft:spawner", 2, 1, 2, 2, 1, 2, false)));
 
 	/**
 	 * A 3×2×3 volume anchored at relative (2, 1, 4) for a player facing east:
@@ -57,8 +64,8 @@ public class ClawdCrafterGameTest {
 	@GameTest
 	public void placesRotatedBuild(GameTestHelper helper) {
 		PreparedBuild build = prepare(helper);
-		helper.assertValueEqual(build.skipped(), 2, "skipped boxes");
-		helper.assertValueEqual(BuildPlacer.enqueue(helper.getLevel(), build, BuildRule.REPLACE, finished -> {}), 10, "placed blocks");
+		helper.assertValueEqual(build.skipped(), 4, "skipped boxes (unknown, operator, unbreakable, spawner)");
+		BuildPlacer.enqueue(helper.getLevel(), helper.makeMockPlayer(GameType.SURVIVAL), build, BuildRule.REPLACE, finished -> {});
 
 		helper.succeedWhen(() -> {
 			// Player facing east: local (x, y, z) -> anchor + (3 - z, y, x - 1).
@@ -114,7 +121,7 @@ public class ClawdCrafterGameTest {
 		((Container) helper.getLevel().getBlockEntity(helper.absolutePos(chest))).setItem(0, new ItemStack(Items.EMERALD, 5));
 		boolean chestBroken = rule == BuildRule.CLEAR_VOLUME;
 		boolean[] done = {false};
-		BuildPlacer.enqueue(helper.getLevel(), prepare(helper), rule, finished -> done[0] = true);
+		BuildPlacer.enqueue(helper.getLevel(), helper.makeMockPlayer(GameType.SURVIVAL), prepare(helper), rule, finished -> done[0] = true);
 		helper.succeedWhen(() -> {
 			helper.assertTrue(done[0], "build finished");
 			helper.assertBlockPresent(Blocks.STONE, torch);
@@ -164,7 +171,7 @@ public class ClawdCrafterGameTest {
 		helper.setBlock(sand.above(), Blocks.ANVIL);
 		Pig pig = helper.spawn(EntityTypes.PIG, new BlockPos(4, 1, 4));
 		boolean[] done = {false};
-		BuildPlacer.enqueue(helper.getLevel(), prepare(helper), BuildRule.CLEAR_VOLUME, finished -> done[0] = true);
+		BuildPlacer.enqueue(helper.getLevel(), helper.makeMockPlayer(GameType.SURVIVAL), prepare(helper), BuildRule.CLEAR_VOLUME, finished -> done[0] = true);
 		helper.succeedWhen(() -> {
 			helper.assertTrue(done[0], "build finished");
 			helper.assertBlockPresent(Blocks.AIR, sand);
@@ -175,6 +182,49 @@ public class ClawdCrafterGameTest {
 			helper.assertTrue(pig.isAlive() && helper.getLevel().noCollision(pig, pig.getBoundingBox()), "pig is free");
 			helper.assertTrue(pig.getY() >= helper.absolutePos(new BlockPos(4, 2, 4)).getY(), "pig stands on the new floor");
 		});
+	}
+
+	/**
+	 * A bed whose foot is broken before its head (foot at local 0,1,1, head at local 0,1,2; both unused, so
+	 * Clear volume removes them) must drop exactly one bed.
+	 */
+	@GameTest
+	public void bedDropsOnce(GameTestHelper helper) {
+		BlockState foot = Blocks.BED.red().defaultBlockState().setValue(BedBlock.FACING, Direction.WEST).setValue(BedBlock.PART, BedPart.FOOT);
+		helper.setBlock(new BlockPos(4, 2, 3), foot);
+		helper.setBlock(new BlockPos(3, 2, 3), foot.setValue(BedBlock.PART, BedPart.HEAD));
+		boolean[] done = {false};
+		BuildPlacer.enqueue(helper.getLevel(), helper.makeMockPlayer(GameType.SURVIVAL), prepare(helper), BuildRule.CLEAR_VOLUME, finished -> done[0] = true);
+		helper.succeedWhen(() -> {
+			helper.assertTrue(done[0], "build finished");
+			AABB top = new AABB(helper.absolutePos(new BlockPos(2, 1, 4))).inflate(1.5);
+			int beds = helper.getLevel().getEntitiesOfClass(ItemEntity.class, top).stream()
+					.filter(item -> item.getItem().is(Items.BED.red())).mapToInt(item -> item.getItem().getCount()).sum();
+			helper.assertValueEqual(beds, 1, "dropped beds");
+		});
+	}
+
+	/** Items that already existed (chest contents...) are never capped; only bulk loot of broken blocks is. */
+	@GameTest
+	public void dropCapKeepsPlayerItems(GameTestHelper helper) {
+		DropPool pool = new DropPool();
+		for (int i = 0; i < 300; i++) {
+			pool.keep(new ItemStack(Items.DIAMOND, 64));
+		}
+		pool.add(new ItemStack(Items.EMERALD, 1));
+		for (int i = 0; i < DropPool.MAX_LOOT_STACKS + 10; i++) {
+			pool.add(new ItemStack(Items.COBBLESTONE, 64));
+		}
+		BlockPos at = helper.absolutePos(new BlockPos(1, 2, 1));
+		DropPool.Result result = pool.spawn(helper.getLevel(), Vec3.atCenterOf(at));
+		helper.assertValueEqual(result.droppedStacks(), 300 + DropPool.MAX_LOOT_STACKS, "dropped stacks");
+		helper.assertValueEqual(result.discardedStacks(), 11, "discarded stacks");
+		List<ItemEntity> items = helper.getLevel().getEntitiesOfClass(ItemEntity.class, new AABB(at).inflate(2));
+		helper.assertValueEqual(items.stream().filter(e -> e.getItem().is(Items.DIAMOND)).mapToInt(e -> e.getItem().getCount()).sum(),
+				300 * 64, "diamonds kept");
+		helper.assertTrue(items.stream().anyMatch(e -> e.getItem().is(Items.EMERALD)), "rare loot kept before bulk");
+		items.forEach(ItemEntity::discard);
+		helper.succeed();
 	}
 
 	/** The bundled SDK loads, derives the JSON schema from BuildPlan, and parses a response. */

@@ -65,6 +65,7 @@ public final class ClawdCrafter implements ModInitializer {
 
 		PayloadTypeRegistry.clientboundPlay().register(Payloads.OpenScreen.TYPE, Payloads.OpenScreen.CODEC);
 		PayloadTypeRegistry.clientboundPlay().register(Payloads.PreviewFailed.TYPE, Payloads.PreviewFailed.CODEC);
+		PayloadTypeRegistry.clientboundPlay().register(Payloads.PreviewPlaced.TYPE, Payloads.PreviewPlaced.CODEC);
 		PayloadTypeRegistry.clientboundPlay().registerLarge(Payloads.Preview.TYPE, Payloads.Preview.CODEC, Payloads.MAX_PREVIEW_BYTES);
 		PayloadTypeRegistry.serverboundPlay().register(Payloads.RequestPreview.TYPE, Payloads.RequestPreview.CODEC);
 		PayloadTypeRegistry.serverboundPlay().register(Payloads.PlaceBuild.TYPE, Payloads.PlaceBuild.CODEC);
@@ -74,6 +75,6 @@ public final class ClawdCrafter implements ModInitializer {
 				(payload, context) -> BuildService.handlePlace(context.player(), payload));
 
 		ServerTickEvents.END_SERVER_TICK.register(BuildPlacer::tick);
-		ServerLifecycleEvents.SERVER_STOPPING.register(server -> BuildPlacer.clear());
+		ServerLifecycleEvents.SERVER_STOPPING.register(server -> BuildPlacer.stopAll());
 	}
 }

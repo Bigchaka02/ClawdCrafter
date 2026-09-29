@@ -12,6 +12,7 @@ public final class ClawdCrafterClient implements ClientModInitializer {
 				(payload, context) -> context.client().setScreenAndShow(new ClawdCrafterScreen(payload)));
 		ClientPlayNetworking.registerGlobalReceiver(Payloads.Preview.TYPE, (payload, context) -> ClientPreview.accept(payload));
 		ClientPlayNetworking.registerGlobalReceiver(Payloads.PreviewFailed.TYPE, (payload, context) -> ClientPreview.failed(payload.pos()));
+		ClientPlayNetworking.registerGlobalReceiver(Payloads.PreviewPlaced.TYPE, (payload, context) -> ClientPreview.placed(payload.pos()));
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> ClientPreview.reset());
 		PreviewRenderer.register();
 	}

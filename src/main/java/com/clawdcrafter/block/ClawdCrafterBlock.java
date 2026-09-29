@@ -1,5 +1,6 @@
 package com.clawdcrafter.block;
 
+import com.clawdcrafter.ClawdCrafter;
 import com.clawdcrafter.network.Payloads;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
@@ -22,7 +23,8 @@ public class ClawdCrafterBlock extends BaseEntityBlock {
 	protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player, BlockHitResult hit) {
 		if (player instanceof ServerPlayer serverPlayer && level.getBlockEntity(pos) instanceof ClawdCrafterBlockEntity be) {
 			ServerPlayNetworking.send(serverPlayer,
-					new Payloads.OpenScreen(pos, be.prompt(), be.sizeX(), be.sizeY(), be.sizeZ(), be.buildRule(), be.isBusy()));
+					new Payloads.OpenScreen(pos, be.prompt(), be.sizeX(), be.sizeY(), be.sizeZ(),
+							ClawdCrafter.CONFIG.maxDimension, be.buildRule(), be.isBusy()));
 		}
 		return InteractionResult.SUCCESS;
 	}

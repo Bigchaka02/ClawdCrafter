@@ -1,6 +1,7 @@
 package com.clawdcrafter.build;
 
 import io.netty.buffer.ByteBuf;
+import java.util.Locale;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 
@@ -25,6 +26,6 @@ public enum BuildRule {
 
 	/** Lang key suffix, e.g. gui.clawdcrafter.rule.clear_volume(.desc). */
 	public String key() {
-		return name().toLowerCase(java.util.Locale.ROOT);
+		return name().toLowerCase(Locale.ROOT);
 	}
 }

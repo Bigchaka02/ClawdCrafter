@@ -20,7 +20,7 @@ import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * Packets. Flow: right-click → {@link OpenScreen}; Preview/Retry → {@link RequestPreview} →
- * {@link Preview} (or {@link PreviewFailed}); Generate → {@link PlaceBuild}.
+ * {@link Preview} (or {@link PreviewFailed}); Generate → {@link PlaceBuild} → {@link PreviewPlaced}.
  */
 public final class Payloads {
 	public static final int MAX_PROMPT = 1000;
@@ -29,8 +29,8 @@ public final class Payloads {
 
 	private Payloads() {}
 
-	/** S2C: open the screen pre-filled with the block's last prompt, size and build rule. */
-	public record OpenScreen(BlockPos pos, String prompt, int sizeX, int sizeY, int sizeZ, BuildRule rule, boolean busy)
+	/** S2C: open the screen pre-filled with the block's last prompt, size and build rule; {@code maxSize} is the server's limit. */
+	public record OpenScreen(BlockPos pos, String prompt, int sizeX, int sizeY, int sizeZ, int maxSize, BuildRule rule, boolean busy)
 			implements CustomPacketPayload {
 		public static final Type<OpenScreen> TYPE = new Type<>(ClawdCrafter.id("open_screen"));
 		public static final StreamCodec<RegistryFriendlyByteBuf, OpenScreen> CODEC = StreamCodec.composite(
@@ -39,6 +39,7 @@ public final class Payloads {
 				ByteBufCodecs.VAR_INT, OpenScreen::sizeX,
 				ByteBufCodecs.VAR_INT, OpenScreen::sizeY,
 				ByteBufCodecs.VAR_INT, OpenScreen::sizeZ,
+				ByteBufCodecs.VAR_INT, OpenScreen::maxSize,
 				BuildRule.STREAM_CODEC, OpenScreen::rule,
 				ByteBufCodecs.BOOL, OpenScreen::busy,
 				OpenScreen::new);
@@ -78,6 +79,18 @@ public final class Payloads {
 
 		@Override
 		public Type<PlaceBuild> type() {
+			return TYPE;
+		}
+	}
+
+	/** S2C: Generate was accepted and the previewed build consumed; the client drops its ghosts. */
+	public record PreviewPlaced(BlockPos pos) implements CustomPacketPayload {
+		public static final Type<PreviewPlaced> TYPE = new Type<>(ClawdCrafter.id("preview_placed"));
+		public static final StreamCodec<RegistryFriendlyByteBuf, PreviewPlaced> CODEC =
+				StreamCodec.composite(BlockPos.STREAM_CODEC, PreviewPlaced::pos, PreviewPlaced::new);
+
+		@Override
+		public Type<PreviewPlaced> type() {
 			return TYPE;
 		}
 	}

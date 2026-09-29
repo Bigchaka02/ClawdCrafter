@@ -2,6 +2,8 @@ package com.clawdcrafter.build;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.SectionPos;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.phys.AABB;
 
@@ -46,5 +48,18 @@ public record BuildVolume(BlockPos anchor, Direction facing, int sizeX, int size
 	/** World-space box enclosing the whole volume. */
 	public AABB bounds() {
 		return AABB.encapsulatingFullBlocks(toWorld(0, 0, 0), toWorld(sizeX - 1, sizeY - 1, sizeZ - 1));
+	}
+
+	/** Whether every chunk the volume touches is loaded (checks one block per chunk column). */
+	public boolean isLoaded(Level level) {
+		AABB box = bounds();
+		for (int x = SectionPos.blockToSectionCoord(box.minX); x <= SectionPos.blockToSectionCoord(box.maxX - 1); x++) {
+			for (int z = SectionPos.blockToSectionCoord(box.minZ); z <= SectionPos.blockToSectionCoord(box.maxZ - 1); z++) {
+				if (!level.isLoaded(new BlockPos(SectionPos.sectionToBlockCoord(x), anchor.getY(), SectionPos.sectionToBlockCoord(z)))) {
+					return false;
+				}
+			}
+		}
+		return true;
 	}
 }

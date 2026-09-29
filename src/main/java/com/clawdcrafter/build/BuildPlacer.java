@@ -6,9 +6,11 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.BlockPos;
@@ -17,10 +19,10 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.decoration.BlockAttachedEntity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.Fallable;
@@ -28,10 +30,7 @@ import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.GameMasterBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.Rotation;
-import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.block.state.properties.BedPart;
-import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -43,7 +42,8 @@ import net.minecraft.world.phys.Vec3;
  * <ul>
  *   <li>Existing blocks that get removed or replaced are <em>broken</em>: their loot (and container contents)
  *       is collected, never silently deleted. Liquids are simply replaced. Unbreakable blocks (bedrock,
- *       portals, command blocks) are never touched.</li>
+ *       portals, command blocks) and cells the player may not edit (spawn protection, world border) are
+ *       never touched.</li>
  *   <li>Gravity blocks (sand, gravel, anvils...) resting on the top edge of the volume are broken before they
  *       can fall in; anything that falls into the site anyway is caught.</li>
  *   <li>Mobs, players, boats and other entities left inside new blocks are lifted to the nearest free space;
@@ -52,6 +52,9 @@ import net.minecraft.world.phys.Vec3;
  * </ul>
  */
 public final class BuildPlacer {
+	/** Survival-unobtainable blocks that are still breakable; unbreakable and operator blocks are rejected separately. */
+	private static final Set<Block> FORBIDDEN = Set.of(Blocks.SPAWNER, Blocks.TRIAL_SPAWNER, Blocks.VAULT,
+			Blocks.BUDDING_AMETHYST, Blocks.REINFORCED_DEEPSLATE);
 	private static final List<Job> JOBS = new ArrayList<>();
 
 	private BuildPlacer() {}
@@ -64,31 +67,49 @@ public final class BuildPlacer {
 		}
 	}
 
-	/** Reported when a build finishes. */
-	public record Finished(int droppedStacks, int discardedStacks) {}
-
-	private record Placement(BlockPos pos, BlockState state) {}
+	/**
+	 * Reported when a build ends. {@code skippedCells}: cells left alone because their chunk was unloaded or the
+	 * player may not edit them; {@code interrupted}: the server stopped before the build completed.
+	 */
+	public record Finished(int droppedStacks, int discardedStacks, int skippedCells, boolean interrupted) {}
 
 	private static final class Job {
 		final ServerLevel level;
-		final BuildVolume volume;
+		final Player player;
+		final PreparedBuild build;
 		final BuildRule rule;
-		final List<Placement> placements;
 		final Consumer<Finished> onDone;
+		final Rotation rotation;
+		final Map<BlockState, BlockState> rotated = new IdentityHashMap<>();
 		final AABB site;
 		final int topY;
 		final DropPool drops = new DropPool();
 		int next;
+		int skipped;
 
-		Job(ServerLevel level, BuildVolume volume, BuildRule rule, List<Placement> placements, Consumer<Finished> onDone) {
+		Job(ServerLevel level, Player player, PreparedBuild build, BuildRule rule, Consumer<Finished> onDone) {
 			this.level = level;
-			this.volume = volume;
+			this.player = player;
+			this.build = build;
 			this.rule = rule;
-			this.placements = placements;
 			this.onDone = onDone;
+			BuildVolume volume = build.volume();
+			this.rotation = volume.rotation();
 			// The volume plus a 1-block margin (2 above): where popped items and falling blocks end up.
 			this.site = volume.bounds().inflate(1).expandTowards(0, 1, 0);
 			this.topY = volume.anchor().getY() + volume.sizeY() - 1;
+		}
+
+		/** What this rule puts in grid cell {@code i} (already rotated), or null to leave the cell alone. */
+		BlockState target(int i) {
+			BlockState state = build.grid()[i];
+			if (state == null && rule == BuildRule.CLEAR_VOLUME) {
+				state = Blocks.AIR.defaultBlockState();
+			}
+			if (state == null || (rule == BuildRule.ONLY_WHERE_POSSIBLE && state.isAir())) {
+				return null;
+			}
+			return rotated.computeIfAbsent(state, s -> s.rotate(rotation));
 		}
 	}
 
@@ -125,24 +146,9 @@ public final class BuildPlacer {
 		return new PreparedBuild(volume, grid, title, boxes.size(), skipped);
 	}
 
-	/** Queues a prepared build for placement under the given rule; returns the number of cells queued. */
-	public static int enqueue(ServerLevel level, PreparedBuild build, BuildRule rule, Consumer<Finished> onDone) {
-		BuildVolume volume = build.volume();
-		Rotation rotation = volume.rotation();
-		List<Placement> placements = new ArrayList<>();
-		// Grid order is bottom layer first, so supports go down before what rests on them.
-		for (int i = 0; i < build.grid().length; i++) {
-			BlockState state = build.grid()[i];
-			if (state == null && rule == BuildRule.CLEAR_VOLUME) {
-				state = Blocks.AIR.defaultBlockState();
-			}
-			if (state == null || (rule == BuildRule.ONLY_WHERE_POSSIBLE && state.isAir())) {
-				continue;
-			}
-			placements.add(new Placement(volume.toWorld(i), state.rotate(rotation)));
-		}
-		JOBS.add(new Job(level, volume, rule, placements, onDone));
-		return placements.size();
+	/** Queues a prepared build for placement under the given rule; {@code player} is who edits the world. */
+	public static void enqueue(ServerLevel level, Player player, PreparedBuild build, BuildRule rule, Consumer<Finished> onDone) {
+		JOBS.add(new Job(level, player, build, rule, onDone));
 	}
 
 	/** Called at the end of every server tick. */
@@ -151,39 +157,48 @@ public final class BuildPlacer {
 		Iterator<Job> jobs = JOBS.iterator();
 		while (budget > 0 && jobs.hasNext()) {
 			Job job = jobs.next();
-			while (budget > 0 && job.next < job.placements.size()) {
-				place(job, job.placements.get(job.next++));
-				budget--;
+			BlockState[] grid = job.build.grid();
+			// Grid order is bottom layer first, so supports go down before what rests on them.
+			while (budget > 0 && job.next < grid.length) {
+				int i = job.next++;
+				BlockState target = job.target(i);
+				if (target != null) {
+					place(job, job.build.volume().toWorld(i), target);
+					budget--;
+				}
 			}
 			catchFallingBlocks(job);
 			liftStuckEntities(job);
-			if (job.next >= job.placements.size()) {
+			if (job.next >= grid.length) {
 				jobs.remove();
-				finish(job);
+				finish(job, false);
 			}
 		}
 	}
 
-	public static void clear() {
+	/** Server stopping: end every job now so already-collected loot is dropped (and saved) rather than lost. */
+	public static void stopAll() {
+		JOBS.forEach(job -> finish(job, true));
 		JOBS.clear();
 	}
 
-	private static void place(Job job, Placement placement) {
+	private static void place(Job job, BlockPos pos, BlockState target) {
 		ServerLevel level = job.level;
-		BlockPos pos = placement.pos();
-		if (!level.isLoaded(pos)) {
+		if (!level.isLoaded(pos) || !level.mayInteract(job.player, pos)) { // unloaded, spawn protection, world border
+			job.skipped++;
 			return;
 		}
 		BlockState existing = level.getBlockState(pos);
-		boolean skip = existing == placement.state() // already right
+		boolean skip = existing == target // already right
 				|| existing.getDestroySpeed(level, pos) < 0 // unbreakable: bedrock, portals, command blocks
 				|| (job.rule == BuildRule.ONLY_WHERE_POSSIBLE && !isSoft(level, pos, existing));
 		if (!skip) {
 			if (!existing.isAir() && !(existing.getBlock() instanceof LiquidBlock)) {
-				// Break, don't delete: keep the loot. Container contents spill via vanilla and are swept up in finish().
-				job.drops.addAll(dropsOf(level, pos, existing));
+				// Break, don't delete. Container contents and the other half of doors/beds drop via vanilla
+				// (neighbour updates always drop) and are swept up in finish().
+				job.drops.addAll(Block.getDrops(existing, level, pos, level.getBlockEntity(pos)));
 			}
-			level.setBlock(pos, placement.state(), Block.UPDATE_ALL);
+			level.setBlock(pos, target, Block.UPDATE_ALL);
 		}
 		if (pos.getY() == job.topY && FallingBlock.isFree(level.getBlockState(pos))) {
 			breakGravityColumnAbove(job, pos);
@@ -199,28 +214,16 @@ public final class BuildPlacer {
 				|| (state.getDestroySpeed(level, pos) == 0 && state.getCollisionShape(level, pos).isEmpty());
 	}
 
-	/** Loot of a block as if broken by hand (no tool), without spawning anything (no XP, no silverfish). */
-	private static List<ItemStack> dropsOf(ServerLevel level, BlockPos pos, BlockState state) {
-		BlockEntity blockEntity = level.getBlockEntity(pos);
-		List<ItemStack> drops = Block.getDrops(state, level, pos, blockEntity);
-		// A bed only drops from its head; if the foot goes first, the head vanishes with it.
-		if (drops.isEmpty() && state.getBlock() instanceof BedBlock
-				&& state.getValue(BlockStateProperties.BED_PART) == BedPart.FOOT) {
-			return List.of(new ItemStack(state.getBlock()));
-		}
-		return drops;
-	}
-
 	/** The top edge just became open: break sand, gravel, anvils... stacked above it before they fall in. */
 	private static void breakGravityColumnAbove(Job job, BlockPos top) {
 		ServerLevel level = job.level;
 		BlockPos pos = top.above();
 		while (level.isLoaded(pos)) {
 			BlockState state = level.getBlockState(pos);
-			if (!(state.getBlock() instanceof Fallable) || state.getDestroySpeed(level, pos) < 0) {
+			if (!(state.getBlock() instanceof Fallable) || state.getDestroySpeed(level, pos) < 0 || !level.mayInteract(job.player, pos)) {
 				return;
 			}
-			job.drops.addAll(dropsOf(level, pos, state));
+			job.drops.addAll(Block.getDrops(state, level, pos, level.getBlockEntity(pos)));
 			level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
 			pos = pos.above();
 		}
@@ -237,7 +240,7 @@ public final class BuildPlacer {
 	/** Mobs, players, boats, minecarts... whose hitbox is now inside blocks get lifted to the first free space. */
 	private static void liftStuckEntities(Job job) {
 		ServerLevel level = job.level;
-		List<Entity> entities = level.getEntities((Entity) null, job.volume.bounds().expandTowards(0, 1, 0), entity ->
+		List<Entity> entities = level.getEntities((Entity) null, job.build.volume().bounds().expandTowards(0, 1, 0), entity ->
 				!(entity instanceof ItemEntity || entity instanceof FallingBlockEntity || entity instanceof BlockAttachedEntity)
 						&& !entity.isSpectator() && !entity.isPassenger());
 		for (Entity entity : entities) {
@@ -254,7 +257,7 @@ public final class BuildPlacer {
 		}
 	}
 
-	private static void finish(Job job) {
+	private static void finish(Job job, boolean interrupted) {
 		ServerLevel level = job.level;
 		// Item frames, paintings, leash knots that lost their support.
 		for (BlockAttachedEntity attached : level.getEntitiesOfClass(BlockAttachedEntity.class, job.site)) {
@@ -264,22 +267,27 @@ public final class BuildPlacer {
 			}
 		}
 		catchFallingBlocks(job);
-		// Popped torches, spilled chest contents, items that were lying in the site.
+		// Popped torches, spilled chest contents, items that were lying in the site: player-owned, never capped.
 		for (ItemEntity item : level.getEntitiesOfClass(ItemEntity.class, job.site)) {
-			job.drops.add(item.getItem());
+			job.drops.keep(item.getItem());
 			item.discard();
 		}
 		liftStuckEntities(job);
-		BlockPos anchor = job.volume.anchor();
+		BlockPos anchor = job.build.volume().anchor();
 		DropPool.Result result = job.drops.spawn(level, new Vec3(anchor.getX() + 0.5, anchor.getY() + 1.05, anchor.getZ() + 0.5));
-		job.onDone.accept(new Finished(result.droppedStacks(), result.discardedStacks()));
+		job.onDone.accept(new Finished(result.droppedStacks(), result.discardedStacks(), job.skipped, interrupted));
 	}
 
-	/** Parses "minecraft:oak_stairs[facing=east]" with the vanilla parser; rejects unknown and operator-only blocks. */
+	/**
+	 * Parses "minecraft:oak_stairs[facing=east]" with the vanilla parser. Rejects unknown ids, operator blocks,
+	 * unbreakable blocks (bedrock, barrier, portals) and survival-unobtainable ones (spawners, budding amethyst).
+	 */
 	private static BlockState parse(HolderLookup<Block> lookup, String block) {
 		try {
 			BlockState state = BlockStateParser.parseForBlock(lookup, block, false).blockState();
-			return state.getBlock() instanceof GameMasterBlock ? null : state;
+			Block type = state.getBlock();
+			boolean allowed = !(type instanceof GameMasterBlock) && type.defaultDestroyTime() >= 0 && !FORBIDDEN.contains(type);
+			return allowed ? state : null;
 		} catch (CommandSyntaxException e) {
 			return null;
 		}

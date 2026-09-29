@@ -126,7 +126,7 @@ public class ClawdCrafterClientGameTest implements FabricClientGameTest {
 	private static void reopen(ClientGameTestContext context, TestSingleplayerContext singleplayer, BlockPos anchor) {
 		singleplayer.getServer().runOnServer(server -> {
 			ServerPlayer player = server.getPlayerList().getPlayers().getFirst();
-			ServerPlayNetworking.send(player, new Payloads.OpenScreen(anchor, "a cozy cottage", 16, 16, 16, BuildRule.CLEAR_VOLUME, false));
+			ServerPlayNetworking.send(player, new Payloads.OpenScreen(anchor, "a cozy cottage", 16, 16, 16, 64, BuildRule.CLEAR_VOLUME, false));
 		});
 		context.waitForScreen(ClawdCrafterScreen.class);
 		context.waitTicks(5);

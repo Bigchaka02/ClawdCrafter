@@ -50,8 +50,10 @@ public final class ClaudeBuilder {
 			Blocks:
 			- Use valid Java Edition block ids with the minecraft: namespace and optional state properties
 			  in brackets, e.g. minecraft:oak_stairs[facing=east,half=bottom], minecraft:oak_log[axis=y],
-			  minecraft:lantern[hanging=true]. No NBT. Operator blocks (command, structure, jigsaw) are
-			  forbidden. Unknown ids are skipped.
+			  minecraft:lantern[hanging=true]. No NBT. Unknown ids are skipped, and so are blocks a survival
+			  player can't obtain: operator blocks (command, structure, jigsaw), unbreakable blocks
+			  (bedrock, barrier, light, portals, end portal frames) and spawners, vaults, budding amethyst
+			  and reinforced deepslate.
 			- Two-part blocks need both parts: doors (half=lower and half=upper), beds (part=foot and
 			  part=head), tall plants (half=lower and half=upper).
 			- Fences, walls, panes and bars connect to neighbours automatically. Gravity blocks (sand,

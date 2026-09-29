@@ -98,21 +98,48 @@ public final class BuildService {
 			say(player, "Nothing to place — press Preview first.");
 			return;
 		}
+		if (!build.volume().isLoaded(player.level())) {
+			say(player, "Part of the build area isn't loaded. Move closer and press Generate again.");
+			return;
+		}
 		be.setPending(null);
 		be.setBuildRule(request.rule());
-		BuildPlacer.enqueue(player.level(), build, request.rule(), finished -> say(player, "Finished \"%s\".%s%s".formatted(build.title(),
-				finished.droppedStacks() > 0 ? " Items from broken blocks were dropped on the ClawdCrafter block." : "",
-				finished.discardedStacks() > 0 ? " (%d stacks of bulk blocks were over the limit and discarded.)".formatted(finished.discardedStacks()) : "")));
+		ServerPlayNetworking.send(player, new Payloads.PreviewPlaced(request.pos()));
+		String title = build.title(); // captured alone so the job's callback doesn't hold the whole build
+		BuildPlacer.enqueue(player.level(), player, build, request.rule(), finished -> say(player, finishedMessage(title, finished)));
 		// Translatable, so the rule name comes from the client's language file (servers don't load mod lang files).
-		say(player, Component.literal("Placing \"%s\": %d blocks — ".formatted(build.title(), build.blockCount()))
+		say(player, Component.literal("Placing \"%s\": %d blocks — ".formatted(title, build.blockCount()))
 				.append(Component.translatable("gui.clawdcrafter.rule." + request.rule().key())));
 	}
 
-	/** Returns the block entity if the player may use it right now, otherwise null. */
+	private static String finishedMessage(String title, BuildPlacer.Finished finished) {
+		StringBuilder message = new StringBuilder(finished.interrupted()
+				? "\"%s\" was interrupted by the server stopping.".formatted(title)
+				: "Finished \"%s\".".formatted(title));
+		if (finished.skippedCells() > 0) {
+			message.append(" %d blocks were skipped (protected or unloaded area).".formatted(finished.skippedCells()));
+		}
+		if (finished.droppedStacks() > 0) {
+			message.append(" Items from broken blocks were dropped on the ClawdCrafter block.");
+		}
+		if (finished.discardedStacks() > 0) {
+			message.append(" (%d stacks of bulk blocks were over the limit and discarded.)".formatted(finished.discardedStacks()));
+		}
+		return message.toString();
+	}
+
+	/** Returns the block entity if the player may use it right now, otherwise null (and tells them why). */
 	private static ClawdCrafterBlockEntity validate(ServerPlayer player, BlockPos pos) {
 		ServerLevel level = player.level();
-		if (!level.isLoaded(pos) || player.distanceToSqr(Vec3.atCenterOf(pos)) > MAX_DISTANCE_SQ
-				|| !(level.getBlockEntity(pos) instanceof ClawdCrafterBlockEntity be)) {
+		if (!level.isLoaded(pos) || !(level.getBlockEntity(pos) instanceof ClawdCrafterBlockEntity be)) {
+			return null;
+		}
+		if (player.distanceToSqr(Vec3.atCenterOf(pos)) > MAX_DISTANCE_SQ) {
+			say(player, "You're too far from the ClawdCrafter block.");
+			return null;
+		}
+		if (!player.mayBuild()) {
+			say(player, "You can't build in this game mode.");
 			return null;
 		}
 		if (ClawdCrafter.CONFIG.opOnly && !player.permissions().hasPermission(Permissions.COMMANDS_GAMEMASTER)) {

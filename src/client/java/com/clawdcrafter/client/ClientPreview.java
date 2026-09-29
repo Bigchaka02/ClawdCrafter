@@ -15,7 +15,6 @@ import net.minecraft.world.level.block.state.BlockState;
 public final class ClientPreview {
 	public record Ghost(BlockPos pos, BlockState state) {}
 
-	private static BlockPos anchor;
 	private static BuildVolume volume;
 	private static List<Ghost> ghosts = List.of();
 	private static int blockCount;
@@ -38,7 +37,6 @@ public final class ClientPreview {
 				list.add(new Ghost(pos, state));
 			}
 		});
-		anchor = preview.pos();
 		volume = preview.volume();
 		ghosts = List.copyOf(list);
 		blockCount = blocks.size();
@@ -46,6 +44,13 @@ public final class ClientPreview {
 			pendingFor = null;
 		}
 		refreshScreen();
+	}
+
+	/** The server placed the previewed build: its ghosts are no longer needed. */
+	public static void placed(BlockPos pos) {
+		if (hasPreview(pos)) {
+			clear();
+		}
 	}
 
 	public static void failed(BlockPos pos) {
@@ -68,7 +73,7 @@ public final class ClientPreview {
 	}
 
 	public static boolean hasPreview(BlockPos pos) {
-		return volume != null && pos.equals(anchor);
+		return volume != null && pos.equals(volume.anchor());
 	}
 
 	/** Number of (non-air) blocks in the preview, including hidden interior ones. */
@@ -85,7 +90,6 @@ public final class ClientPreview {
 	}
 
 	public static void clear() {
-		anchor = null;
 		volume = null;
 		ghosts = List.of();
 		blockCount = 0;

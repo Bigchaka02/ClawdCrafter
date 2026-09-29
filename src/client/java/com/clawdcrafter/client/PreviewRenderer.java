@@ -26,8 +26,11 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class PreviewRenderer {
 	private static final float GHOST_ALPHA = 0.5f;
+	private static final int ALPHA_MASK = ARGB.white(GHOST_ALPHA);
 	private static final int BOUNDARY_COLOR = 0xFFFF0000;
-	private static final PoseStack.Pose SCRATCH = new PoseStack.Pose();
+	// Render-thread scratch poses, reused for every ghost instead of allocating per block per frame.
+	private static final PoseStack.Pose BLOCK_POSE = new PoseStack.Pose();
+	private static final PoseStack.Pose QUAD_POSE = new PoseStack.Pose();
 	private static ModelBlockRenderer blockRenderer;
 
 	private PreviewRenderer() {}
@@ -51,8 +54,10 @@ public final class PreviewRenderer {
 				});
 			}
 
-			// Live boundary while the screen is open (follows the size boxes); otherwise the preview's.
+			// The preview's volume is exactly what Generate will use, so it wins. Without one, the open
+			// screen shows a live boundary that follows the size boxes and the player's facing.
 			BuildVolume volume = Minecraft.getInstance().gui.screen() instanceof ClawdCrafterScreen screen
+					&& !ClientPreview.hasPreview(screen.pos())
 					? screen.liveVolume()
 					: ClientPreview.volume();
 			if (volume != null) {
@@ -71,15 +76,14 @@ public final class PreviewRenderer {
 			blockRenderer = new ModelBlockRenderer(false, true, mc.getBlockColors()); // no AO; cull faces against the real world
 		}
 		BlockStateModel model = mc.getModelManager().getBlockStateModelSet().get(ghost.state());
-		PoseStack.Pose blockPose = pose.copy();
-		blockPose.translate((float) (ghost.pos().getX() - camera.x), (float) (ghost.pos().getY() - camera.y), (float) (ghost.pos().getZ() - camera.z));
-		int alpha = ARGB.white(GHOST_ALPHA);
+		BLOCK_POSE.set(pose);
+		BLOCK_POSE.translate((float) (ghost.pos().getX() - camera.x), (float) (ghost.pos().getY() - camera.y), (float) (ghost.pos().getZ() - camera.z));
 		blockRenderer.tesselateBlock((x, y, z, quad, instance) -> {
-			instance.multiplyColor(alpha);
+			instance.multiplyColor(ALPHA_MASK);
 			instance.setLightCoords(LightCoordsUtil.FULL_BRIGHT);
-			SCRATCH.set(blockPose);
-			SCRATCH.translate(x, y, z);
-			consumer.putBakedQuad(SCRATCH, quad, instance);
+			QUAD_POSE.set(BLOCK_POSE);
+			QUAD_POSE.translate(x, y, z);
+			consumer.putBakedQuad(QUAD_POSE, quad, instance);
 		}, 0.0F, 0.0F, 0.0F, level, ghost.pos(), ghost.state(), model, ghost.state().getSeed(ghost.pos()));
 	}
 

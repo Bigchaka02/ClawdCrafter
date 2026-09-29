@@ -9,6 +9,7 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
@@ -35,7 +36,6 @@ public class ClawdCrafterScreen extends Screen {
 	private static final int LABEL_COLOR = 0xFFA0A0A0;
 	private static final int NOTE_COLOR = 0xFF8C8C8C;
 	private static final int PANEL_COLOR = 0xB0000000;
-	private static final int MAX_SIZE = 128;
 
 	private final Payloads.OpenScreen data;
 	// Current field values, kept across rebuilds (e.g. when a preview arrives while the screen is open).
@@ -58,7 +58,8 @@ public class ClawdCrafterScreen extends Screen {
 
 	private int left() { return (width - WIDTH) / 2; }
 	private int top() { return Math.max(24, height / 2 - 95); }
-	private int gap() { return (WIDTH - 3 * SIZE_BOX_WIDTH) / 2; }
+	/** X of size box {@code i} (0 = X, 1 = Y, 2 = Z), spread across the panel. */
+	private int sizeBoxX(int i) { return left() + i * (SIZE_BOX_WIDTH + (WIDTH - 3 * SIZE_BOX_WIDTH) / 2); }
 	private int ruleX() { return left() + WIDTH - RULE_WIDTH; }
 
 	@Override
@@ -74,9 +75,9 @@ public class ClawdCrafterScreen extends Screen {
 		prompt.setResponder(value -> promptValue = value);
 		addRenderableWidget(prompt);
 
-		addRenderableWidget(sizeBox(left, top + 52, xValue, "gui.clawdcrafter.size_x")).setResponder(v -> xValue = v);
-		addRenderableWidget(sizeBox(left + SIZE_BOX_WIDTH + gap(), top + 52, yValue, "gui.clawdcrafter.size_y")).setResponder(v -> yValue = v);
-		addRenderableWidget(sizeBox(left + 2 * (SIZE_BOX_WIDTH + gap()), top + 52, zValue, "gui.clawdcrafter.size_z")).setResponder(v -> zValue = v);
+		addRenderableWidget(sizeBox(sizeBoxX(0), top + 52, xValue, "gui.clawdcrafter.size_x")).setResponder(v -> xValue = v);
+		addRenderableWidget(sizeBox(sizeBoxX(1), top + 52, yValue, "gui.clawdcrafter.size_y")).setResponder(v -> yValue = v);
+		addRenderableWidget(sizeBox(sizeBoxX(2), top + 52, zValue, "gui.clawdcrafter.size_z")).setResponder(v -> zValue = v);
 
 		// Row 1: Preview on the left wall, build rule toggle on the right wall.
 		Button preview = addRenderableWidget(Button.builder(
@@ -128,16 +129,19 @@ public class ClawdCrafterScreen extends Screen {
 		rebuildWidgets();
 	}
 
-	/** Generate: place exactly what is being previewed, under the selected build rule. */
+	/** Generate: place exactly what is being previewed. The ghosts go away when the server confirms. */
 	private void generate() {
 		ClientPlayNetworking.send(new Payloads.PlaceBuild(data.pos(), rule));
-		ClientPreview.clear();
 		onClose();
 	}
 
 	private void clearPreview() {
 		ClientPreview.clear();
 		rebuildWidgets();
+	}
+
+	public BlockPos pos() {
+		return data.pos();
 	}
 
 	/** The volume the current values would produce, for the live red boundary. */
@@ -159,9 +163,9 @@ public class ClawdCrafterScreen extends Screen {
 		int top = top();
 		graphics.centeredText(font, title, width / 2, top - 14, 0xFFFFFFFF);
 		graphics.text(font, Component.translatable("gui.clawdcrafter.prompt"), left, top + 2, LABEL_COLOR);
-		graphics.text(font, Component.translatable("gui.clawdcrafter.size_x"), left, top + 42, LABEL_COLOR);
-		graphics.text(font, Component.translatable("gui.clawdcrafter.size_y"), left + SIZE_BOX_WIDTH + gap(), top + 42, LABEL_COLOR);
-		graphics.text(font, Component.translatable("gui.clawdcrafter.size_z"), left + 2 * (SIZE_BOX_WIDTH + gap()), top + 42, LABEL_COLOR);
+		graphics.text(font, Component.translatable("gui.clawdcrafter.size_x"), sizeBoxX(0), top + 42, LABEL_COLOR);
+		graphics.text(font, Component.translatable("gui.clawdcrafter.size_y"), sizeBoxX(1), top + 42, LABEL_COLOR);
+		graphics.text(font, Component.translatable("gui.clawdcrafter.size_z"), sizeBoxX(2), top + 42, LABEL_COLOR);
 
 		// Rule description: small grey notes under the toggle, wrapped to its width.
 		graphics.pose().pushMatrix();
@@ -185,12 +189,12 @@ public class ClawdCrafterScreen extends Screen {
 		}
 	}
 
-	/** Non-numbers fall back to the default; the server clamps to its own limit. */
-	private static int parseSize(String value) {
+	/** Non-numbers fall back to the default; clamped to the server's limit so the boundary never lies. */
+	private int parseSize(String value) {
 		try {
-			return Math.clamp(Integer.parseInt(value.strip()), 1, MAX_SIZE);
+			return Math.clamp(Integer.parseInt(value.strip()), 1, data.maxSize());
 		} catch (NumberFormatException e) {
-			return ClawdCrafterBlockEntity.DEFAULT_SIZE;
+			return Math.min(ClawdCrafterBlockEntity.DEFAULT_SIZE, data.maxSize());
 		}
 	}
 
