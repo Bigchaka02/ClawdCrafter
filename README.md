@@ -38,7 +38,6 @@ This file is read on the **server**. In singleplayer, the integrated server read
 | `effort` | `medium` | `low` / `medium` / `high` / `xhigh` / `max`. Higher settings give more detailed builds but are slower and cost more. |
 | `maxDimension` | `64` | Largest value allowed for each size box (capped at 128). |
 | `blocksPerTick` | `1024` | How fast blocks are placed. Lower this if the server lags. |
-| `clearVolume` | `true` | Fill the build volume with air before building. |
 | `opOnly` | `false` | Only let operators use the block. Recommended on public servers, since every build costs API credits. |
 
 ## Usage
@@ -52,7 +51,19 @@ This file is read on the **server**. In singleplayer, the integrated server read
 |---|---|
 | **Generate** | Places exactly the previewed build, with no second call to Claude. |
 | **Clear** | Removes the ghost blocks. |
-| **Refresh** | Asks Claude again with the same prompt, for a different take. |
+| **Retry** | Asks Claude again with the same prompt, for a different take. |
+
+The **Build rule** button, on the right of Preview, sets what Generate does with blocks already inside the volume. Click it to cycle between three rules. A short description of the current rule appears under the button. The block remembers your choice.
+
+| Build rule | What Generate does |
+|---|---|
+| **Clear volume** (default) | Clears out all the blocks in the constraints and turns them to empty air before building. |
+| **Replace blocks with build** | Makes the build completely but doesn't clear everything beforehand. It only replaces the existing blocks with the blocks that exist in the projected build, including the build's own open spaces such as room interiors and doorways. |
+| **Build only where possible** | Places parts of the projected build wherever there is an empty air block available, without replacing or deleting anything that already exists. |
+
+The rule is applied when you press Generate, so you can switch rules after previewing without asking Claude again.
+
+![Build rule toggle](docs/screenshots/build-rule.png)
 
 The build goes **on the far side of the block, facing you**:
 
@@ -70,17 +81,20 @@ Chat messages tell you when a preview is ready, when a build is placed or finish
 
 1. **UI** (`client/ClawdCrafterScreen`):
    - Right-clicking the block makes the server send `OpenScreen`.
-   - **Preview** and **Refresh** send `RequestPreview`.
-   - **Generate** sends `PlaceBuild`.
+   - **Preview** and **Retry** send `RequestPreview`.
+   - **Generate** sends `PlaceBuild`, which carries the build rule.
    - The packets are defined in `network/Payloads`.
 2. **Validation** (`build/BuildService`): the server checks that the player is within reach and that the block isn't already busy. It also clamps the sizes and applies `opOnly`.
 3. **Claude** (`ai/ClaudeBuilder`): a streaming request goes out through the official Anthropic Java SDK on a background thread. It uses **structured output**: the JSON schema comes from the `ai/BuildPlan` records, so the response always parses. It also uses **server-side refusal fallback** (`fallbacks: "default"`). Claude returns a list of `/fill`-style boxes: `block`, two corners, and `hollow`.
 4. **Prepare** (`build/BuildPlacer.prepare`):
-   - The boxes are drawn into a grid; later boxes overwrite earlier ones.
+   - The boxes are drawn into a grid; later boxes overwrite earlier ones. Cells no box touches are "not part of the build". Claude is asked to mark open spaces with explicit air boxes.
    - Block strings are parsed with vanilla `BlockStateParser`. Unknown blocks and operator-only blocks (command, structure, jigsaw) are skipped.
    - The block entity keeps the result as its pending build, and the server sends it to the player as a compact `Preview` packet.
 5. **Preview** (`client/ClientPreview`, `client/PreviewRenderer`): the client draws the ghost blocks and the red boundary. Positions and rotation come from the shared `build/BuildVolume`, so the preview matches the real placement exactly.
-6. **Place** (`build/BuildPlacer.enqueue`): **Generate** places the pending build, rotated to face the player and bottom-up, `blocksPerTick` at a time.
+6. **Place** (`build/BuildPlacer.enqueue`): **Generate** places the pending build, rotated to face the player and bottom-up, `blocksPerTick` at a time. The `build/BuildRule` decides what happens to existing blocks:
+   - **Clear volume**: cells outside the build become air.
+   - **Replace**: cells outside the build are left alone.
+   - **Only where possible**: a block is placed only if its spot is air when its turn comes.
 
 ## Build from source
 
@@ -91,15 +105,16 @@ Chat messages tell you when a preview is ready, when a build is placed or finish
 ./gradlew runClientGameTest  # real-client visual test; needs a display, not part of build
 ```
 
-The game tests (`src/gametest`) don't need an API key. They check three things:
+The game tests (`src/gametest`) don't need an API key. They check four things:
 - Placement, rotation and block rejection, using a hand-written plan.
+- Each build rule, against blocks already in the world.
 - That the preview packet survives encoding and matches the real placement and boundary.
 - That the bundled SDK builds a request (schema, model, effort, fallbacks) and parses a response offline.
 
 The client game test drives a real client through the whole flow and saves screenshots to `build/run/clientGameTest/screenshots`:
 - It right-clicks the block to open the screen.
 - It injects a test preview and checks that the ghost blocks appear.
-- It presses **Clear**, then **Generate**, and checks that the blocks were placed.
+- It presses **Clear**, cycles through the build rules, then presses **Generate** and checks that the blocks were placed.
 
 On a headless Linux machine, run it with `xvfb-run -a ./gradlew runClientGameTest`. This needs Mesa's software Vulkan driver (`mesa-vulkan-drivers`).
 
@@ -120,7 +135,7 @@ docs/PLAN.md                   research notes + implementation plan
 
 ## Placeholders and limitations
 
-- **Texture**: a hand-drawn 16×16 orange spark on black (`assets/clawdcrafter/textures/block/clawdcrafter.png`). Swap it freely.
+- **Texture**: the Clawd mascot pixel-drawn at 16×16 on black (`assets/clawdcrafter/textures/block/clawdcrafter.png`). Swap it freely.
 - **Recipe**: placeholder (`data/clawdcrafter/recipe/clawdcrafter.json`).
 - There's no undo, no in-game config screen and no support for land-claim or protection mods.
 - Builds can include any non-operator block, including TNT, lava and fire. Use `opOnly` on public servers.

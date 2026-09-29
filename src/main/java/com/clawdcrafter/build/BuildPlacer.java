@@ -30,15 +30,16 @@ public final class BuildPlacer {
 
 	private BuildPlacer() {}
 
-	/** A build ready to preview or place. {@code grid} is in local (unrotated) space; null = leave untouched. */
+	/** A build ready to preview or place. {@code grid} is in local (unrotated) space; null = not part of the build. */
 	public record PreparedBuild(BuildVolume volume, BlockState[] grid, String title, int boxes, int skipped) {
-		/** Visible (non-air) blocks; clearing air is not counted. */
+		/** Visible (non-air) blocks. */
 		public int blockCount() {
 			return (int) Arrays.stream(grid).filter(state -> state != null && !state.isAir()).count();
 		}
 	}
 
-	private record Placement(BlockPos pos, BlockState state) {}
+	/** {@code onlyIntoAir}: skip if the target is no longer air when its turn comes (ONLY_WHERE_POSSIBLE). */
+	private record Placement(BlockPos pos, BlockState state, boolean onlyIntoAir) {}
 
 	private static final class Job {
 		final ServerLevel level;
@@ -53,13 +54,13 @@ public final class BuildPlacer {
 		}
 	}
 
-	/** Rasterises the boxes (later boxes overwrite earlier ones). */
-	public static PreparedBuild prepare(HolderLookup<Block> lookup, BuildVolume volume, BuildPlan plan, String fallbackTitle, boolean clear) {
+	/**
+	 * Rasterises the boxes (later boxes overwrite earlier ones). Cells no box touches stay null; what happens to
+	 * them is decided by the {@link BuildRule} at placement time, so one preview works for every rule.
+	 */
+	public static PreparedBuild prepare(HolderLookup<Block> lookup, BuildVolume volume, BuildPlan plan, String fallbackTitle) {
 		List<BuildPlan.Box> boxes = plan.boxes() == null ? List.of() : plan.boxes();
 		BlockState[] grid = new BlockState[volume.cellCount()];
-		if (clear) {
-			Arrays.fill(grid, Blocks.AIR.defaultBlockState());
-		}
 		Map<String, BlockState> parsed = new HashMap<>();
 		int skipped = 0;
 		for (BuildPlan.Box box : boxes) {
@@ -86,17 +87,22 @@ public final class BuildPlacer {
 		return new PreparedBuild(volume, grid, title, boxes.size(), skipped);
 	}
 
-	/** Queues a prepared build for placement; returns the number of blocks queued. */
-	public static int enqueue(ServerLevel level, PreparedBuild build, Runnable onDone) {
+	/** Queues a prepared build for placement under the given rule; returns the number of cells queued. */
+	public static int enqueue(ServerLevel level, PreparedBuild build, BuildRule rule, Runnable onDone) {
 		BuildVolume volume = build.volume();
 		Rotation rotation = volume.rotation();
+		boolean onlyIntoAir = rule == BuildRule.ONLY_WHERE_POSSIBLE;
 		List<Placement> placements = new ArrayList<>();
 		// Grid order is bottom layer first, so supports go down before what rests on them.
 		for (int i = 0; i < build.grid().length; i++) {
 			BlockState state = build.grid()[i];
-			if (state != null) {
-				placements.add(new Placement(volume.toWorld(i), state.rotate(rotation)));
+			if (state == null && rule == BuildRule.CLEAR_VOLUME) {
+				state = Blocks.AIR.defaultBlockState();
 			}
+			if (state == null || (onlyIntoAir && state.isAir())) {
+				continue;
+			}
+			placements.add(new Placement(volume.toWorld(i), state.rotate(rotation), onlyIntoAir));
 		}
 		JOBS.add(new Job(level, placements, onDone));
 		return placements.size();
@@ -110,7 +116,8 @@ public final class BuildPlacer {
 			Job job = jobs.next();
 			while (budget > 0 && job.next < job.placements.size()) {
 				Placement placement = job.placements.get(job.next++);
-				if (job.level.isLoaded(placement.pos())) {
+				if (job.level.isLoaded(placement.pos())
+						&& (!placement.onlyIntoAir() || job.level.getBlockState(placement.pos()).isAir())) {
 					job.level.setBlock(placement.pos(), placement.state(), FLAGS);
 				}
 				budget--;

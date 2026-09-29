@@ -2,6 +2,7 @@ package com.clawdcrafter.network;
 
 import com.clawdcrafter.ClawdCrafter;
 import com.clawdcrafter.build.BuildPlacer.PreparedBuild;
+import com.clawdcrafter.build.BuildRule;
 import com.clawdcrafter.build.BuildVolume;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -18,7 +19,7 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
- * Packets. Flow: right-click → {@link OpenScreen}; Preview/Refresh → {@link RequestPreview} →
+ * Packets. Flow: right-click → {@link OpenScreen}; Preview/Retry → {@link RequestPreview} →
  * {@link Preview} (or {@link PreviewFailed}); Generate → {@link PlaceBuild}.
  */
 public final class Payloads {
@@ -28,8 +29,9 @@ public final class Payloads {
 
 	private Payloads() {}
 
-	/** S2C: open the screen pre-filled with the block's last prompt and size. */
-	public record OpenScreen(BlockPos pos, String prompt, int sizeX, int sizeY, int sizeZ, boolean busy) implements CustomPacketPayload {
+	/** S2C: open the screen pre-filled with the block's last prompt, size and build rule. */
+	public record OpenScreen(BlockPos pos, String prompt, int sizeX, int sizeY, int sizeZ, BuildRule rule, boolean busy)
+			implements CustomPacketPayload {
 		public static final Type<OpenScreen> TYPE = new Type<>(ClawdCrafter.id("open_screen"));
 		public static final StreamCodec<RegistryFriendlyByteBuf, OpenScreen> CODEC = StreamCodec.composite(
 				BlockPos.STREAM_CODEC, OpenScreen::pos,
@@ -37,6 +39,7 @@ public final class Payloads {
 				ByteBufCodecs.VAR_INT, OpenScreen::sizeX,
 				ByteBufCodecs.VAR_INT, OpenScreen::sizeY,
 				ByteBufCodecs.VAR_INT, OpenScreen::sizeZ,
+				BuildRule.STREAM_CODEC, OpenScreen::rule,
 				ByteBufCodecs.BOOL, OpenScreen::busy,
 				OpenScreen::new);
 
@@ -46,8 +49,9 @@ public final class Payloads {
 		}
 	}
 
-	/** C2S: Preview / Refresh pressed — ask Claude for a build. */
-	public record RequestPreview(BlockPos pos, String prompt, int sizeX, int sizeY, int sizeZ) implements CustomPacketPayload {
+	/** C2S: Preview / Retry pressed — ask Claude for a build. The rule is only remembered here. */
+	public record RequestPreview(BlockPos pos, String prompt, int sizeX, int sizeY, int sizeZ, BuildRule rule)
+			implements CustomPacketPayload {
 		public static final Type<RequestPreview> TYPE = new Type<>(ClawdCrafter.id("request_preview"));
 		public static final StreamCodec<RegistryFriendlyByteBuf, RequestPreview> CODEC = StreamCodec.composite(
 				BlockPos.STREAM_CODEC, RequestPreview::pos,
@@ -55,6 +59,7 @@ public final class Payloads {
 				ByteBufCodecs.VAR_INT, RequestPreview::sizeX,
 				ByteBufCodecs.VAR_INT, RequestPreview::sizeY,
 				ByteBufCodecs.VAR_INT, RequestPreview::sizeZ,
+				BuildRule.STREAM_CODEC, RequestPreview::rule,
 				RequestPreview::new);
 
 		@Override
@@ -63,11 +68,13 @@ public final class Payloads {
 		}
 	}
 
-	/** C2S: Generate pressed — place the build that was previewed. */
-	public record PlaceBuild(BlockPos pos) implements CustomPacketPayload {
+	/** C2S: Generate pressed — place the build that was previewed, under the chosen rule. */
+	public record PlaceBuild(BlockPos pos, BuildRule rule) implements CustomPacketPayload {
 		public static final Type<PlaceBuild> TYPE = new Type<>(ClawdCrafter.id("place_build"));
-		public static final StreamCodec<RegistryFriendlyByteBuf, PlaceBuild> CODEC =
-				StreamCodec.composite(BlockPos.STREAM_CODEC, PlaceBuild::pos, PlaceBuild::new);
+		public static final StreamCodec<RegistryFriendlyByteBuf, PlaceBuild> CODEC = StreamCodec.composite(
+				BlockPos.STREAM_CODEC, PlaceBuild::pos,
+				BuildRule.STREAM_CODEC, PlaceBuild::rule,
+				PlaceBuild::new);
 
 		@Override
 		public Type<PlaceBuild> type() {

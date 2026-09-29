@@ -6,6 +6,7 @@ import com.clawdcrafter.ai.BuildPlan.Box;
 import com.clawdcrafter.ai.ClaudeBuilder;
 import com.clawdcrafter.build.BuildPlacer;
 import com.clawdcrafter.build.BuildPlacer.PreparedBuild;
+import com.clawdcrafter.build.BuildRule;
 import com.clawdcrafter.build.BuildVolume;
 import com.clawdcrafter.config.ClawdConfig;
 import com.clawdcrafter.network.Payloads;
@@ -21,6 +22,7 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -34,18 +36,21 @@ public class ClawdCrafterGameTest {
 			new Box("minecraft:not_a_block", 0, 1, 0, 0, 1, 0, false),
 			new Box("minecraft:command_block", 2, 1, 0, 2, 1, 0, false)));
 
-	/** A 3×2×3 volume anchored at relative (2, 1, 4) for a player facing east. */
-	private static PreparedBuild prepare(GameTestHelper helper, boolean clear) {
+	/**
+	 * A 3×2×3 volume anchored at relative (2, 1, 4) for a player facing east:
+	 * local (x, y, z) -> relative (5 - z, 1 + y, 3 + x).
+	 */
+	private static PreparedBuild prepare(GameTestHelper helper) {
 		BuildVolume volume = new BuildVolume(helper.absolutePos(new BlockPos(2, 1, 4)), Direction.EAST, 3, 2, 3);
-		return BuildPlacer.prepare(helper.getLevel().registryAccess().lookupOrThrow(Registries.BLOCK), volume, PLAN, "fallback", clear);
+		return BuildPlacer.prepare(helper.getLevel().registryAccess().lookupOrThrow(Registries.BLOCK), volume, PLAN, "fallback");
 	}
 
 	/** Parse → rasterise → rotate → tick-place, with a hand-written plan instead of Claude. */
 	@GameTest
 	public void placesRotatedBuild(GameTestHelper helper) {
-		PreparedBuild build = prepare(helper, false);
+		PreparedBuild build = prepare(helper);
 		helper.assertValueEqual(build.skipped(), 2, "skipped boxes");
-		helper.assertValueEqual(BuildPlacer.enqueue(helper.getLevel(), build, () -> {}), 10, "placed blocks");
+		helper.assertValueEqual(BuildPlacer.enqueue(helper.getLevel(), build, BuildRule.REPLACE, () -> {}), 10, "placed blocks");
 
 		helper.succeedWhen(() -> {
 			// Player facing east: local (x, y, z) -> anchor + (3 - z, y, x - 1).
@@ -63,7 +68,7 @@ public class ClawdCrafterGameTest {
 	/** The preview packet survives encoding and shows the same (non-air) blocks the server would place. */
 	@GameTest
 	public void previewMatchesPlacement(GameTestHelper helper) {
-		Payloads.Preview sent = Payloads.Preview.of(prepare(helper, true));
+		Payloads.Preview sent = Payloads.Preview.of(prepare(helper));
 		RegistryFriendlyByteBuf buf = new RegistryFriendlyByteBuf(Unpooled.buffer(), helper.getLevel().registryAccess());
 		Payloads.Preview.CODEC.encode(buf, sent);
 		Payloads.Preview received = Payloads.Preview.CODEC.decode(buf);
@@ -76,6 +81,38 @@ public class ClawdCrafterGameTest {
 		AABB expected = AABB.encapsulatingFullBlocks(helper.absolutePos(new BlockPos(3, 1, 3)), helper.absolutePos(new BlockPos(5, 2, 5)));
 		helper.assertValueEqual(received.volume().bounds(), expected, "boundary box");
 		helper.succeed();
+	}
+
+	/**
+	 * Existing blocks: gold sits in a cell the build doesn't use (local 0,1,0), diamond sits where the build
+	 * puts stone (local 0,0,0). Checks each rule's promise.
+	 */
+	private static void checkRule(GameTestHelper helper, BuildRule rule, Block expectGold, Block expectDiamond) {
+		BlockPos gold = new BlockPos(5, 2, 3);
+		BlockPos diamond = new BlockPos(5, 1, 3);
+		helper.setBlock(gold, Blocks.GOLD_BLOCK);
+		helper.setBlock(diamond, Blocks.DIAMOND_BLOCK);
+		BuildPlacer.enqueue(helper.getLevel(), prepare(helper), rule, () -> {});
+		helper.succeedWhen(() -> {
+			helper.assertBlockPresent(Blocks.STONE, 4, 1, 4); // an empty stone cell is always filled
+			helper.assertBlockPresent(expectGold, gold);
+			helper.assertBlockPresent(expectDiamond, diamond);
+		});
+	}
+
+	@GameTest
+	public void ruleClearVolume(GameTestHelper helper) {
+		checkRule(helper, BuildRule.CLEAR_VOLUME, Blocks.AIR, Blocks.STONE);
+	}
+
+	@GameTest
+	public void ruleReplace(GameTestHelper helper) {
+		checkRule(helper, BuildRule.REPLACE, Blocks.GOLD_BLOCK, Blocks.STONE);
+	}
+
+	@GameTest
+	public void ruleOnlyWherePossible(GameTestHelper helper) {
+		checkRule(helper, BuildRule.ONLY_WHERE_POSSIBLE, Blocks.GOLD_BLOCK, Blocks.DIAMOND_BLOCK);
 	}
 
 	/** The bundled SDK loads, derives the JSON schema from BuildPlan, and parses a response. */

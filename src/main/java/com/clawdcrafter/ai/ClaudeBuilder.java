@@ -43,6 +43,9 @@ public final class ClaudeBuilder {
 			  unchanged, which is handy for rooms.
 			- Boxes are applied in order and later boxes overwrite earlier ones, so place large masses
 			  first, then carve doors, windows and interiors with minecraft:air, then add details.
+			- The volume may already contain terrain. Mark every space that must stay open (room
+			  interiors, doorways, window openings, paths) with minecraft:air boxes; cells you never
+			  touch count as "not part of the build".
 
 			Blocks:
 			- Use valid Java Edition block ids with the minecraft: namespace and optional state properties
@@ -73,15 +76,12 @@ public final class ClaudeBuilder {
 
 	/** Builds the request (no network). Public so the game test can check it offline. */
 	public static StructuredMessageCreateParams<BuildPlan> params(ClawdConfig config, String prompt, int sizeX, int sizeY, int sizeZ) {
-		String volume = config.clearVolume
-				? "The volume starts empty (air)."
-				: "The volume may already contain terrain; use minecraft:air boxes to clear what you need.";
 		return MessageCreateParams.builder()
 				.model(config.model)
 				.maxTokens(64000L)
 				.system(SYSTEM_PROMPT)
-				.addUserMessage("Build volume: W=%d (x), H=%d (y), D=%d (z). %s%n%nRequest: %s"
-						.formatted(sizeX, sizeY, sizeZ, volume, prompt))
+				.addUserMessage("Build volume: W=%d (x), H=%d (y), D=%d (z).%n%nRequest: %s"
+						.formatted(sizeX, sizeY, sizeZ, prompt))
 				// If a safety classifier declines, let the API retry on its recommended fallback model.
 				.addBeta("server-side-fallback-2026-07-01")
 				.fallbacksDefault()

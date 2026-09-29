@@ -23,8 +23,6 @@ public final class ClawdConfig {
 	public int maxDimension = 64;
 	/** Blocks placed per server tick (20 ticks = 1 second). */
 	public int blocksPerTick = 1024;
-	/** Replace everything in the build volume with air before building. */
-	public boolean clearVolume = true;
 	/** Only operators may use the block (recommended on public servers — every build costs API credits). */
 	public boolean opOnly = false;
 

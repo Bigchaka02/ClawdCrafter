@@ -18,7 +18,7 @@ import net.minecraft.server.permissions.Permissions;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Server side of the two buttons: Preview/Refresh asks Claude (off-thread) and sends the result to the
+ * Server side of the two buttons: Preview/Retry asks Claude (off-thread) and sends the result to the
  * player as ghost blocks; Generate places exactly the build that was previewed.
  */
 public final class BuildService {
@@ -45,6 +45,7 @@ public final class BuildService {
 		int sizeY = Math.clamp(request.sizeY(), 1, max);
 		int sizeZ = Math.clamp(request.sizeZ(), 1, max);
 		be.setRequest(prompt, sizeX, sizeY, sizeZ);
+		be.setBuildRule(request.rule());
 		if (be.isBusy()) {
 			say(player, "Already generating — please wait.");
 			failed(player, request.pos());
@@ -75,12 +76,12 @@ public final class BuildService {
 				return;
 			}
 			PreparedBuild build = BuildPlacer.prepare(level.registryAccess().lookupOrThrow(Registries.BLOCK),
-					volume, plan, prompt, config.clearVolume);
+					volume, plan, prompt);
 			current.setPending(build);
 			if (!player.hasDisconnected()) {
 				ServerPlayNetworking.send(player, Payloads.Preview.of(build));
 			}
-			say(player, "Preview of \"%s\" ready: %d blocks from %d boxes%s. Right-click the block to Generate, Clear or Refresh."
+			say(player, "Preview of \"%s\" ready: %d blocks from %d boxes%s. Right-click the block to Generate, Clear or Retry."
 					.formatted(build.title(), build.blockCount(), build.boxes(),
 							build.skipped() > 0 ? " (" + build.skipped() + " skipped: invalid block)" : ""));
 		}, level.getServer());
@@ -98,8 +99,11 @@ public final class BuildService {
 			return;
 		}
 		be.setPending(null);
-		BuildPlacer.enqueue(player.level(), build, () -> say(player, "Finished \"%s\".".formatted(build.title())));
-		say(player, "Placing \"%s\": %d blocks.".formatted(build.title(), build.blockCount()));
+		be.setBuildRule(request.rule());
+		BuildPlacer.enqueue(player.level(), build, request.rule(), () -> say(player, "Finished \"%s\".".formatted(build.title())));
+		// Translatable, so the rule name comes from the client's language file (servers don't load mod lang files).
+		say(player, Component.literal("Placing \"%s\": %d blocks — ".formatted(build.title(), build.blockCount()))
+				.append(Component.translatable("gui.clawdcrafter.rule." + request.rule().key())));
 	}
 
 	/** Returns the block entity if the player may use it right now, otherwise null. */
@@ -134,9 +138,13 @@ public final class BuildService {
 	}
 
 	private static void say(ServerPlayer player, String message) {
+		say(player, Component.literal(message));
+	}
+
+	private static void say(ServerPlayer player, Component message) {
 		if (!player.hasDisconnected()) {
 			player.sendSystemMessage(Component.literal("[ClawdCrafter] ").withColor(0xD97757)
-					.append(Component.literal(message).withColor(0xFFFFFF)));
+					.append(message.copy().withColor(0xFFFFFF)));
 		}
 	}
 }

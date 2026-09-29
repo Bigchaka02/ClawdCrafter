@@ -2,6 +2,7 @@ package com.clawdcrafter.block;
 
 import com.clawdcrafter.ClawdCrafter;
 import com.clawdcrafter.build.BuildPlacer.PreparedBuild;
+import com.clawdcrafter.build.BuildRule;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -16,6 +17,7 @@ public class ClawdCrafterBlockEntity extends BlockEntity {
 	private int sizeX = DEFAULT_SIZE;
 	private int sizeY = DEFAULT_SIZE;
 	private int sizeZ = DEFAULT_SIZE;
+	private BuildRule buildRule = BuildRule.CLEAR_VOLUME;
 	/** Not saved: a restart simply drops the in-flight request and the previewed build. */
 	private boolean busy;
 	private PreparedBuild pending;
@@ -28,6 +30,7 @@ public class ClawdCrafterBlockEntity extends BlockEntity {
 	public int sizeX() { return sizeX; }
 	public int sizeY() { return sizeY; }
 	public int sizeZ() { return sizeZ; }
+	public BuildRule buildRule() { return buildRule; }
 	public boolean isBusy() { return busy; }
 	public void setBusy(boolean busy) { this.busy = busy; }
 	/** The last previewed build, placed by Generate. */
@@ -42,6 +45,11 @@ public class ClawdCrafterBlockEntity extends BlockEntity {
 		setChanged();
 	}
 
+	public void setBuildRule(BuildRule buildRule) {
+		this.buildRule = buildRule;
+		setChanged();
+	}
+
 	@Override
 	protected void saveAdditional(ValueOutput output) {
 		super.saveAdditional(output);
@@ -49,6 +57,7 @@ public class ClawdCrafterBlockEntity extends BlockEntity {
 		output.putInt("size_x", sizeX);
 		output.putInt("size_y", sizeY);
 		output.putInt("size_z", sizeZ);
+		output.putInt("build_rule", buildRule.ordinal());
 	}
 
 	@Override
@@ -58,5 +67,6 @@ public class ClawdCrafterBlockEntity extends BlockEntity {
 		sizeX = input.getIntOr("size_x", DEFAULT_SIZE);
 		sizeY = input.getIntOr("size_y", DEFAULT_SIZE);
 		sizeZ = input.getIntOr("size_z", DEFAULT_SIZE);
+		buildRule = BuildRule.byId(input.getIntOr("build_rule", 0));
 	}
 }

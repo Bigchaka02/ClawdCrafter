@@ -6,6 +6,7 @@ import com.clawdcrafter.ai.BuildPlan.Box;
 import com.clawdcrafter.block.ClawdCrafterBlockEntity;
 import com.clawdcrafter.build.BuildPlacer;
 import com.clawdcrafter.build.BuildPlacer.PreparedBuild;
+import com.clawdcrafter.build.BuildRule;
 import com.clawdcrafter.build.BuildVolume;
 import com.clawdcrafter.client.ClawdCrafterScreen;
 import com.clawdcrafter.client.ClientPreview;
@@ -67,7 +68,7 @@ public class ClawdCrafterClientGameTest implements FabricClientGameTest {
 			singleplayer.getServer().runOnServer(server -> {
 				ServerPlayer player = server.getPlayerList().getPlayers().getFirst();
 				BuildVolume volume = new BuildVolume(anchor, Direction.NORTH, 16, 16, 16);
-				PreparedBuild build = BuildPlacer.prepare(player.level().registryAccess().lookupOrThrow(Registries.BLOCK), volume, HOUSE, "x", true);
+				PreparedBuild build = BuildPlacer.prepare(player.level().registryAccess().lookupOrThrow(Registries.BLOCK), volume, HOUSE, "x");
 				((ClawdCrafterBlockEntity) player.level().getBlockEntity(anchor)).setPending(build);
 				ServerPlayNetworking.send(player, Payloads.Preview.of(build));
 			});
@@ -102,6 +103,15 @@ public class ClawdCrafterClientGameTest implements FabricClientGameTest {
 			});
 			context.waitFor(client -> ClientPreview.size() > 0);
 			context.waitTicks(5);
+			// Cycle the build rule toggle through the other two rules (screenshot each), back to Clear volume.
+			context.clickScreenButton("Build rule: Clear volume");
+			context.waitTicks(2);
+			context.takeScreenshot("3b-rule-replace");
+			context.clickScreenButton("Build rule: Replace blocks with build");
+			context.waitTicks(2);
+			context.takeScreenshot("3c-rule-only-where-possible");
+			context.clickScreenButton("Build rule: Build only where possible");
+			context.waitTicks(2);
 			context.clickScreenButton("gui.clawdcrafter.generate");
 			BlockPos cornerLog = new BuildVolume(anchor, Direction.NORTH, 16, 16, 16).toWorld(2, 1, 13);
 			singleplayer.getServer().waitFor(server -> server.overworld().getBlockState(cornerLog).is(Blocks.OAK_LOG));
@@ -116,7 +126,7 @@ public class ClawdCrafterClientGameTest implements FabricClientGameTest {
 	private static void reopen(ClientGameTestContext context, TestSingleplayerContext singleplayer, BlockPos anchor) {
 		singleplayer.getServer().runOnServer(server -> {
 			ServerPlayer player = server.getPlayerList().getPlayers().getFirst();
-			ServerPlayNetworking.send(player, new Payloads.OpenScreen(anchor, "a cozy cottage", 16, 16, 16, false));
+			ServerPlayNetworking.send(player, new Payloads.OpenScreen(anchor, "a cozy cottage", 16, 16, 16, BuildRule.CLEAR_VOLUME, false));
 		});
 		context.waitForScreen(ClawdCrafterScreen.class);
 		context.waitTicks(5);

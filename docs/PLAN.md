@@ -65,3 +65,14 @@
   - The boundary uses `RenderTypes.lines()`.
   - Ghosts buried inside other ghosts are skipped.
 - Verified on a real client (Xvfb with software Vulkan) by `ClawdCrafterClientGameTest`.
+
+## 5. Iteration 3 — build rules and layout
+- Texture: the Clawd mascot (orange, black eyes, four legs) at 16×16 on black.
+- Screen:
+  - Row 1: Preview against the left wall, Build rule toggle against the right wall.
+  - Row 2: Generate, Clear and Retry (was Refresh) side by side from the left, with the rule description in small (0.75×) grey text under the toggle.
+- `BuildRule`: CLEAR_VOLUME / REPLACE / ONLY_WHERE_POSSIBLE.
+  - The prepared grid keeps untouched cells as null, and the rule is applied at Generate time, so one preview serves every rule.
+  - The system prompt asks Claude to mark open spaces with explicit air boxes.
+  - The config option `clearVolume` is replaced by this per-block rule, which is saved on the block entity.
+- Game tests check each rule against pre-placed blocks.
