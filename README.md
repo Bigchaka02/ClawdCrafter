@@ -93,16 +93,22 @@ Chat messages tell you when a preview is ready, when a build is placed or finish
 1. **UI** (`client/ClawdCrafterScreen`):
    - Right-clicking the block makes the server send `OpenScreen`.
    - **Preview** and **Retry** send `RequestPreview`.
-   - **Generate** sends `PlaceBuild`, which carries the build rule.
+   - **Generate** sends `PlaceBuild`, which carries the preview's id and the build rule. The server only places the preview you actually saw; a newer preview made by someone else is refused. It confirms with `PreviewPlaced`, and only then do the ghosts disappear.
    - The packets are defined in `network/Payloads`.
-2. **Validation** (`build/BuildService`): the server checks that the player is within reach and that the block isn't already busy. It also clamps the sizes and applies `opOnly`.
+2. **Validation** (`build/BuildService`):
+   - The player must be within vanilla reach of the block and in a game mode that can build (not adventure or spectator).
+   - The block mustn't already be busy.
+   - Sizes are clamped and `opOnly` applies.
+   - Each Claude request gets an id, so a late reply for a block that was broken or re-used is ignored.
 3. **Claude** (`ai/ClaudeBuilder`): a streaming request goes out through the official Anthropic Java SDK on a background thread. It uses **structured output**: the JSON schema comes from the `ai/BuildPlan` records, so the response always parses. It also uses **server-side refusal fallback** (`fallbacks: "default"`). Claude returns a list of `/fill`-style boxes: `block`, two corners, and `hollow`.
 4. **Prepare** (`build/BuildPlacer.prepare`):
    - The boxes are drawn into a grid; later boxes overwrite earlier ones. Cells no box touches are "not part of the build". Claude is asked to mark open spaces with explicit air boxes.
    - Block strings are parsed with vanilla `BlockStateParser`. Unknown blocks and operator-only blocks (command, structure, jigsaw) are skipped.
-   - The block entity keeps the result as its pending build, and the server sends it to the player as a compact `Preview` packet.
+   - The grid is built and encoded off the server thread. The block entity keeps only the compact `Preview` (palette + run lengths, the same data sent to the player), and turns it back into a grid on Generate.
 5. **Preview** (`client/ClientPreview`, `client/PreviewRenderer`): the client draws the ghost blocks and the red boundary. Positions and rotation come from the shared `build/BuildVolume`, so the preview matches the real placement exactly.
-6. **Place** (`build/BuildPlacer.enqueue`): **Generate** places the pending build, rotated to face the player and bottom-up, `blocksPerTick` at a time. The `build/BuildRule` decides what happens to existing blocks:
+6. **Place** (`build/BuildPlacer.enqueue`): **Generate** places the pending build, rotated to face the player and bottom-up, `blocksPerTick` at a time.
+   - Cells under spawn protection, outside the world border or in unloaded chunks are skipped and reported.
+   - If the server stops mid-build, the build ends early and the items collected so far are still dropped. The `build/BuildRule` decides what happens to existing blocks:
    - **Clear volume**: cells outside the build become air.
    - **Replace**: cells outside the build are left alone.
    - **Only where possible**: a block is placed only if its spot is air (or grass, flowers, snow, a liquid, a torch...) when its turn comes.

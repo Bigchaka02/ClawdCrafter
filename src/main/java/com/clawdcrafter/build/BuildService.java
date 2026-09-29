@@ -2,6 +2,7 @@ package com.clawdcrafter.build;
 
 import com.anthropic.errors.AnthropicServiceException;
 import com.clawdcrafter.ClawdCrafter;
+import com.clawdcrafter.ai.BuildPlan;
 import com.clawdcrafter.ai.ClaudeBuilder;
 import com.clawdcrafter.block.ClawdCrafterBlockEntity;
 import com.clawdcrafter.build.BuildPlacer.PreparedBuild;
@@ -10,81 +11,95 @@ import com.clawdcrafter.network.Payloads;
 import java.util.concurrent.CompletionException;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
-import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.level.block.Block;
 
 /**
- * Server side of the two buttons: Preview/Retry asks Claude (off-thread) and sends the result to the
- * player as ghost blocks; Generate places exactly the build that was previewed.
+ * Server side of the buttons: Preview/Retry asks Claude (off-thread) and sends the result to the player as
+ * ghost blocks; Generate places exactly the preview the player saw (matched by id).
  */
 public final class BuildService {
-	private static final double MAX_DISTANCE_SQ = 8.0 * 8.0;
+	/** Request ids are unique per server run, so a stale reply can never be mistaken for the current one. */
+	private static int nextRequestId = 1;
 
 	private BuildService() {}
 
-	/** Runs on the server thread. */
+	/** Runs on the server thread. Every refusal tells the client, so its "Generating…" state never sticks. */
 	public static void handlePreview(ServerPlayer player, Payloads.RequestPreview request) {
-		ClawdConfig config = ClawdCrafter.CONFIG;
-		ClawdCrafterBlockEntity be = validate(player, request.pos());
+		if (!startPreview(player, request)) {
+			send(player, new Payloads.PreviewFailed(request.pos()));
+		}
+	}
+
+	/** Returns false if the request was refused (the player was told why). */
+	private static boolean startPreview(ServerPlayer player, Payloads.RequestPreview request) {
+		BlockPos pos = request.pos();
+		ClawdCrafterBlockEntity be = validate(player, pos);
 		if (be == null) {
-			failed(player, request.pos());
-			return;
+			return false;
 		}
 		String prompt = request.prompt().strip();
 		if (prompt.isEmpty()) {
 			say(player, "Write a prompt first.");
-			failed(player, request.pos());
-			return;
+			return false;
 		}
-		int max = config.maxDimension;
-		int sizeX = Math.clamp(request.sizeX(), 1, max);
-		int sizeY = Math.clamp(request.sizeY(), 1, max);
-		int sizeZ = Math.clamp(request.sizeZ(), 1, max);
-		be.setRequest(prompt, sizeX, sizeY, sizeZ);
-		be.setBuildRule(request.rule());
+		ClawdConfig config = ClawdCrafter.CONFIG;
+		int sizeX = Math.clamp(request.sizeX(), 1, config.maxDimension);
+		int sizeY = Math.clamp(request.sizeY(), 1, config.maxDimension);
+		int sizeZ = Math.clamp(request.sizeZ(), 1, config.maxDimension);
+		be.setRequest(prompt, sizeX, sizeY, sizeZ, request.rule());
 		if (be.isBusy()) {
 			say(player, "Already generating — please wait.");
-			failed(player, request.pos());
-			return;
+			return false;
 		}
-		be.setBusy(true);
+		int id = nextRequestId++;
+		be.startRequest(id);
 
 		ServerLevel level = player.level();
-		BlockPos pos = request.pos();
 		// The build appears on the far side of the block, facing the player.
 		BuildVolume volume = new BuildVolume(pos, player.getDirection(), sizeX, sizeY, sizeZ);
+		HolderLookup<Block> blocks = level.registryAccess().lookupOrThrow(Registries.BLOCK); // frozen: safe off-thread
 		say(player, "Asking Claude for \"%s\" (%d×%d×%d)… this can take a minute.".formatted(prompt, sizeX, sizeY, sizeZ));
 
-		ClaudeBuilder.generate(config, prompt, sizeX, sizeY, sizeZ).whenCompleteAsync((plan, error) -> {
-			ClawdCrafterBlockEntity current = level.getBlockEntity(pos) instanceof ClawdCrafterBlockEntity e ? e : null;
-			if (current != null) {
-				current.setBusy(false);
-			}
-			if (error != null) {
-				Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
-				ClawdCrafter.LOGGER.error("Generation failed for prompt \"{}\"", prompt, cause);
-				say(player, "Generation failed: " + describe(cause));
-				failed(player, pos);
-				return;
-			}
-			if (current == null) {
-				failed(player, pos);
-				return;
-			}
-			PreparedBuild build = BuildPlacer.prepare(level.registryAccess().lookupOrThrow(Registries.BLOCK),
-					volume, plan, prompt);
-			current.setPending(build);
-			if (!player.hasDisconnected()) {
-				ServerPlayNetworking.send(player, Payloads.Preview.of(build));
-			}
-			say(player, "Preview of \"%s\" ready: %d blocks from %d boxes%s. Right-click the block to Generate, Clear or Retry."
-					.formatted(build.title(), build.blockCount(), build.boxes(),
-							build.skipped() > 0 ? " (" + build.skipped() + " skipped: invalid block)" : ""));
-		}, level.getServer());
+		ClaudeBuilder.generate(config, prompt, sizeX, sizeY, sizeZ)
+				// Rasterise and encode on the worker thread too; only the hand-off runs on the server thread.
+				.thenApply(plan -> BuildPlacer.prepare(blocks, id, volume, plan, prompt))
+				.thenApply(build -> new Ready(build, Payloads.Preview.of(build)))
+				.whenCompleteAsync((ready, error) -> complete(player, pos, id, prompt, ready, error), level.getServer());
+		return true;
+	}
+
+	private record Ready(PreparedBuild build, Payloads.Preview preview) {}
+
+	private static void complete(ServerPlayer player, BlockPos pos, int id, String prompt, Ready ready, Throwable error) {
+		ClawdCrafterBlockEntity be = player.level().getBlockEntity(pos) instanceof ClawdCrafterBlockEntity e ? e : null;
+		if (be == null || !be.finishRequest(id)) {
+			send(player, new Payloads.PreviewFailed(pos)); // the block was broken or replaced meanwhile
+			return;
+		}
+		if (error != null) {
+			Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+			ClawdCrafter.LOGGER.error("Generation failed for prompt \"{}\"", prompt, cause);
+			say(player, "Generation failed: " + describe(cause));
+			send(player, new Payloads.PreviewFailed(pos));
+			return;
+		}
+		showPreview(player, be, ready.build(), ready.preview());
+	}
+
+	/** Stores the preview for Generate and shows it to the player. Public so the client game test can inject one. */
+	public static void showPreview(ServerPlayer player, ClawdCrafterBlockEntity be, PreparedBuild build, Payloads.Preview preview) {
+		be.setPending(preview);
+		send(player, preview);
+		say(player, "Preview of \"%s\" ready: %d blocks from %d boxes%s. Right-click the block to Generate, Clear or Retry."
+				.formatted(build.title(), build.blockCount(), build.boxes(),
+						build.skipped() > 0 ? " (" + build.skipped() + " skipped: invalid block)" : ""));
 	}
 
 	/** Runs on the server thread. */
@@ -93,23 +108,28 @@ public final class BuildService {
 		if (be == null) {
 			return;
 		}
-		PreparedBuild build = be.pending();
-		if (build == null) {
+		Payloads.Preview preview = be.pending();
+		if (preview == null) {
 			say(player, "Nothing to place — press Preview first.");
 			return;
 		}
-		if (!build.volume().isLoaded(player.level())) {
+		if (preview.id() != request.previewId()) {
+			say(player, "This preview is out of date (a newer one was made). Right-click the block to see it.");
+			return;
+		}
+		if (!preview.volume().isLoaded(player.level())) {
 			say(player, "Part of the build area isn't loaded. Move closer and press Generate again.");
 			return;
 		}
 		be.setPending(null);
 		be.setBuildRule(request.rule());
-		ServerPlayNetworking.send(player, new Payloads.PreviewPlaced(request.pos()));
-		String title = build.title(); // captured alone so the job's callback doesn't hold the whole build
+		send(player, new Payloads.PreviewPlaced(request.pos()));
+		PreparedBuild build = preview.toBuild();
+		String title = build.title();
 		BuildPlacer.enqueue(player.level(), player, build, request.rule(), finished -> say(player, finishedMessage(title, finished)));
 		// Translatable, so the rule name comes from the client's language file (servers don't load mod lang files).
 		say(player, Component.literal("Placing \"%s\": %d blocks — ".formatted(title, build.blockCount()))
-				.append(Component.translatable("gui.clawdcrafter.rule." + request.rule().key())));
+				.append(request.rule().displayName()));
 	}
 
 	private static String finishedMessage(String title, BuildPlacer.Finished finished) {
@@ -134,7 +154,7 @@ public final class BuildService {
 		if (!level.isLoaded(pos) || !(level.getBlockEntity(pos) instanceof ClawdCrafterBlockEntity be)) {
 			return null;
 		}
-		if (player.distanceToSqr(Vec3.atCenterOf(pos)) > MAX_DISTANCE_SQ) {
+		if (!player.isWithinBlockInteractionRange(pos, 1.0)) {
 			say(player, "You're too far from the ClawdCrafter block.");
 			return null;
 		}
@@ -149,12 +169,6 @@ public final class BuildService {
 		return be;
 	}
 
-	private static void failed(ServerPlayer player, BlockPos pos) {
-		if (!player.hasDisconnected()) {
-			ServerPlayNetworking.send(player, new Payloads.PreviewFailed(pos));
-		}
-	}
-
 	private static String describe(Throwable cause) {
 		if (cause instanceof ClaudeBuilder.GenerationException) {
 			return cause.getMessage();
@@ -164,6 +178,12 @@ public final class BuildService {
 		}
 		return cause.getClass().getSimpleName() + ": " + cause.getMessage()
 				+ " (check apiKey in config/clawdcrafter.json and the server log)";
+	}
+
+	private static void send(ServerPlayer player, CustomPacketPayload payload) {
+		if (!player.hasDisconnected()) {
+			ServerPlayNetworking.send(player, payload);
+		}
 	}
 
 	private static void say(ServerPlayer player, String message) {

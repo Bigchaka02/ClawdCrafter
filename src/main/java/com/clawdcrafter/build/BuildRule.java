@@ -1,31 +1,44 @@
 package com.clawdcrafter.build;
 
+import com.mojang.serialization.Codec;
 import io.netty.buffer.ByteBuf;
-import java.util.Locale;
+import java.util.function.IntFunction;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.util.ByIdMap;
+import net.minecraft.util.StringRepresentable;
 
 /** How Generate treats what is already inside the build volume. Chosen per block with the toggle button. */
-public enum BuildRule {
-	/** Everything in the volume becomes air first, then the build is placed. */
-	CLEAR_VOLUME,
+public enum BuildRule implements StringRepresentable {
+	/** Cells outside the build become air; the build replaces everything else. */
+	CLEAR_VOLUME("clear_volume"),
 	/** The whole build is placed (including its intended open spaces); blocks outside the build are left alone. */
-	REPLACE,
-	/** Only build blocks whose target is air are placed; nothing existing is replaced or removed. */
-	ONLY_WHERE_POSSIBLE;
+	REPLACE("replace"),
+	/** Build blocks go only where the world is air or soft (grass, flowers, snow, liquids, torches...). */
+	ONLY_WHERE_POSSIBLE("only_where_possible");
 
-	public static final StreamCodec<ByteBuf, BuildRule> STREAM_CODEC = ByteBufCodecs.VAR_INT.map(BuildRule::byId, BuildRule::ordinal);
+	/** Saved by name, so reordering the enum never changes a saved block's rule. */
+	public static final Codec<BuildRule> CODEC = StringRepresentable.fromEnum(BuildRule::values);
+	private static final IntFunction<BuildRule> BY_ID = ByIdMap.continuous(BuildRule::ordinal, values(), ByIdMap.OutOfBoundsStrategy.ZERO);
+	public static final StreamCodec<ByteBuf, BuildRule> STREAM_CODEC = ByteBufCodecs.idMapper(BY_ID, BuildRule::ordinal);
 
-	public static BuildRule byId(int id) {
-		return id >= 0 && id < values().length ? values()[id] : CLEAR_VOLUME;
+	private final String name;
+
+	BuildRule(String name) {
+		this.name = name;
 	}
 
-	public BuildRule next() {
-		return values()[(ordinal() + 1) % values().length];
+	@Override
+	public String getSerializedName() {
+		return name;
 	}
 
-	/** Lang key suffix, e.g. gui.clawdcrafter.rule.clear_volume(.desc). */
-	public String key() {
-		return name().toLowerCase(Locale.ROOT);
+	public Component displayName() {
+		return Component.translatable("gui.clawdcrafter.rule." + name);
+	}
+
+	public Component description() {
+		return Component.translatable("gui.clawdcrafter.rule." + name + ".desc");
 	}
 }

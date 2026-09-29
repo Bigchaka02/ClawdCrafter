@@ -1,16 +1,17 @@
 package com.clawdcrafter.network;
 
 import com.clawdcrafter.ClawdCrafter;
+import com.clawdcrafter.block.ClawdCrafterBlockEntity;
 import com.clawdcrafter.build.BuildPlacer.PreparedBuild;
 import com.clawdcrafter.build.BuildRule;
 import com.clawdcrafter.build.BuildVolume;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
-import java.util.function.BiConsumer;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
@@ -44,13 +45,17 @@ public final class Payloads {
 				ByteBufCodecs.BOOL, OpenScreen::busy,
 				OpenScreen::new);
 
+		public static OpenScreen of(ClawdCrafterBlockEntity be, int maxSize) {
+			return new OpenScreen(be.getBlockPos(), be.prompt(), be.sizeX(), be.sizeY(), be.sizeZ(), maxSize, be.buildRule(), be.isBusy());
+		}
+
 		@Override
 		public Type<OpenScreen> type() {
 			return TYPE;
 		}
 	}
 
-	/** C2S: Preview / Retry pressed — ask Claude for a build. The rule is only remembered here. */
+	/** C2S: Preview / Retry pressed — ask Claude for a build. The rule is remembered for next time. */
 	public record RequestPreview(BlockPos pos, String prompt, int sizeX, int sizeY, int sizeZ, BuildRule rule)
 			implements CustomPacketPayload {
 		public static final Type<RequestPreview> TYPE = new Type<>(ClawdCrafter.id("request_preview"));
@@ -69,11 +74,12 @@ public final class Payloads {
 		}
 	}
 
-	/** C2S: Generate pressed — place the build that was previewed, under the chosen rule. */
-	public record PlaceBuild(BlockPos pos, BuildRule rule) implements CustomPacketPayload {
+	/** C2S: Generate pressed — place the preview with this {@code previewId}, under the chosen rule. */
+	public record PlaceBuild(BlockPos pos, int previewId, BuildRule rule) implements CustomPacketPayload {
 		public static final Type<PlaceBuild> TYPE = new Type<>(ClawdCrafter.id("place_build"));
 		public static final StreamCodec<RegistryFriendlyByteBuf, PlaceBuild> CODEC = StreamCodec.composite(
 				BlockPos.STREAM_CODEC, PlaceBuild::pos,
+				ByteBufCodecs.VAR_INT, PlaceBuild::previewId,
 				BuildRule.STREAM_CODEC, PlaceBuild::rule,
 				PlaceBuild::new);
 
@@ -95,7 +101,7 @@ public final class Payloads {
 		}
 	}
 
-	/** S2C: generation failed (details were sent in chat). */
+	/** S2C: generation failed or was refused (details were sent in chat). */
 	public record PreviewFailed(BlockPos pos) implements CustomPacketPayload {
 		public static final Type<PreviewFailed> TYPE = new Type<>(ClawdCrafter.id("preview_failed"));
 		public static final StreamCodec<RegistryFriendlyByteBuf, PreviewFailed> CODEC =
@@ -108,27 +114,26 @@ public final class Payloads {
 	}
 
 	/**
-	 * S2C: the build to show as ghost blocks. The local grid is sent as a palette plus run-length pairs
-	 * (palette index, run length); index 0 means "untouched".
+	 * S2C: the build to show as ghost blocks — also what the block entity keeps until Generate, since it is far
+	 * smaller than the grid. The local grid is a palette plus run-length pairs (palette index, run length);
+	 * index 0 means "not part of the build".
 	 */
-	public record Preview(BlockPos pos, Direction facing, int sizeX, int sizeY, int sizeZ,
-			List<BlockState> palette, List<Integer> runs) implements CustomPacketPayload {
+	public record Preview(int id, BuildVolume volume, String title, List<BlockState> palette, int[] runs) implements CustomPacketPayload {
+		private static final StreamCodec<FriendlyByteBuf, int[]> VAR_INT_ARRAY =
+				StreamCodec.of(FriendlyByteBuf::writeVarIntArray, FriendlyByteBuf::readVarIntArray);
 		public static final Type<Preview> TYPE = new Type<>(ClawdCrafter.id("preview"));
 		public static final StreamCodec<RegistryFriendlyByteBuf, Preview> CODEC = StreamCodec.composite(
-				BlockPos.STREAM_CODEC, Preview::pos,
-				Direction.STREAM_CODEC, Preview::facing,
-				ByteBufCodecs.VAR_INT, Preview::sizeX,
-				ByteBufCodecs.VAR_INT, Preview::sizeY,
-				ByteBufCodecs.VAR_INT, Preview::sizeZ,
+				ByteBufCodecs.VAR_INT, Preview::id,
+				BuildVolume.STREAM_CODEC, Preview::volume,
+				ByteBufCodecs.stringUtf8(MAX_PROMPT), Preview::title,
 				ByteBufCodecs.idMapper(Block.BLOCK_STATE_REGISTRY).apply(ByteBufCodecs.list()), Preview::palette,
-				ByteBufCodecs.VAR_INT.apply(ByteBufCodecs.list()), Preview::runs,
+				VAR_INT_ARRAY, Preview::runs,
 				Preview::new);
 
 		public static Preview of(PreparedBuild build) {
-			BuildVolume volume = build.volume();
 			List<BlockState> palette = new ArrayList<>();
-			Map<BlockState, Integer> ids = new HashMap<>();
-			List<Integer> runs = new ArrayList<>();
+			Reference2IntOpenHashMap<BlockState> ids = new Reference2IntOpenHashMap<>();
+			IntArrayList runs = new IntArrayList();
 			BlockState[] grid = build.grid();
 			for (int i = 0; i < grid.length; ) {
 				BlockState state = grid[i];
@@ -136,35 +141,41 @@ public final class Payloads {
 				while (i + run < grid.length && grid[i + run] == state) {
 					run++;
 				}
-				runs.add(state == null ? 0 : ids.computeIfAbsent(state, s -> {
-					palette.add(s);
-					return palette.size();
-				}));
+				int paletteId = 0;
+				if (state != null) {
+					paletteId = ids.getOrDefault(state, 0);
+					if (paletteId == 0) {
+						palette.add(state);
+						paletteId = palette.size();
+						ids.put(state, paletteId);
+					}
+				}
+				runs.add(paletteId);
 				runs.add(run);
 				i += run;
 			}
-			return new Preview(volume.anchor(), volume.facing(), volume.sizeX(), volume.sizeY(), volume.sizeZ(), palette, runs);
+			String title = build.title().length() > MAX_PROMPT ? build.title().substring(0, MAX_PROMPT) : build.title();
+			return new Preview(build.id(), build.volume(), title, palette, runs.toIntArray());
 		}
 
-		public BuildVolume volume() {
-			return new BuildVolume(pos, facing, sizeX, sizeY, sizeZ);
-		}
-
-		/** Visits every non-air block at its world position, rotated like the real placement. */
-		public void forEachBlock(BiConsumer<BlockPos, BlockState> consumer) {
-			BuildVolume volume = volume();
+		/** The local (unrotated) grid, exactly as {@link PreparedBuild#grid()} was on the server. */
+		public BlockState[] grid() {
+			BlockState[] grid = new BlockState[volume.cellCount()];
 			int index = 0;
-			for (int r = 0; r + 1 < runs.size(); r += 2) {
-				int id = runs.get(r);
-				int run = runs.get(r + 1);
-				if (id > 0 && id <= palette.size() && !palette.get(id - 1).isAir()) {
-					BlockState state = palette.get(id - 1).rotate(volume.rotation());
-					for (int i = index; i < index + run && i < volume.cellCount(); i++) {
-						consumer.accept(volume.toWorld(i), state);
-					}
+			for (int r = 0; r + 1 < runs.length && index < grid.length; r += 2) {
+				int paletteId = runs[r];
+				int end = Math.min(grid.length, index + runs[r + 1]);
+				if (paletteId > 0 && paletteId <= palette.size()) {
+					Arrays.fill(grid, index, end, palette.get(paletteId - 1));
 				}
-				index += run;
+				index = end;
 			}
+			return grid;
+		}
+
+		/** Back to a placeable build (Generate). */
+		public PreparedBuild toBuild() {
+			return new PreparedBuild(id, volume, grid(), title, 0, 0);
 		}
 
 		@Override

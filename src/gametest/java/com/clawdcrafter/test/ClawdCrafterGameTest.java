@@ -13,9 +13,9 @@ import com.clawdcrafter.config.ClawdConfig;
 import com.clawdcrafter.network.Payloads;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import io.netty.buffer.Unpooled;
-import java.util.HashMap;
+import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -23,26 +23,32 @@ import net.minecraft.core.registries.Registries;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.Container;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.animal.pig.Pig;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.entity.item.ItemEntity;
-import net.minecraft.world.Container;
-import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
-import net.minecraft.world.level.GameType;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
-/** Headless server tests; run with `./gradlew build` (or `runGameTest`). No API key needed. */
+/**
+ * Headless server tests; run with `./gradlew build` (or `runGameTest`). No API key needed.
+ *
+ * <p>Every build here is a 3×2×3 volume anchored at relative {@link #ANCHOR} for a player facing east:
+ * local (x, y, z) -> relative (5 - z, 1 + y, 3 + x). Drops land on top of the anchor.
+ */
 public class ClawdCrafterGameTest {
+	private static final BlockPos ANCHOR = new BlockPos(2, 1, 4);
+	private static final double DROP_RANGE = 1.5;
 	private static final BuildPlan PLAN = new BuildPlan("test", List.of(
 			new Box("minecraft:stone", 0, 0, 0, 2, 0, 2, false),
 			new Box("minecraft:oak_stairs[facing=north]", 1, 1, 2, 1, 1, 2, false),
@@ -51,24 +57,25 @@ public class ClawdCrafterGameTest {
 			new Box("minecraft:bedrock", 2, 1, 1, 2, 1, 1, false),
 			new Box("minecraft:spawner", 2, 1, 2, 2, 1, 2, false)));
 
-	/**
-	 * A 3×2×3 volume anchored at relative (2, 1, 4) for a player facing east:
-	 * local (x, y, z) -> relative (5 - z, 1 + y, 3 + x).
-	 */
 	private static PreparedBuild prepare(GameTestHelper helper) {
-		BuildVolume volume = new BuildVolume(helper.absolutePos(new BlockPos(2, 1, 4)), Direction.EAST, 3, 2, 3);
-		return BuildPlacer.prepare(helper.getLevel().registryAccess().lookupOrThrow(Registries.BLOCK), volume, PLAN, "fallback");
+		BuildVolume volume = new BuildVolume(helper.absolutePos(ANCHOR), Direction.EAST, 3, 2, 3);
+		return BuildPlacer.prepare(helper.getLevel().registryAccess().lookupOrThrow(Registries.BLOCK), 1, volume, PLAN, "fallback");
+	}
+
+	/** Queues the test build; the returned flag flips when it has finished. */
+	private static AtomicBoolean build(GameTestHelper helper, BuildRule rule) {
+		AtomicBoolean done = new AtomicBoolean();
+		BuildPlacer.enqueue(helper.getLevel(), helper.makeMockPlayer(GameType.SURVIVAL), prepare(helper), rule, finished -> done.set(true));
+		return done;
 	}
 
 	/** Parse → rasterise → rotate → tick-place, with a hand-written plan instead of Claude. */
 	@GameTest
 	public void placesRotatedBuild(GameTestHelper helper) {
-		PreparedBuild build = prepare(helper);
-		helper.assertValueEqual(build.skipped(), 4, "skipped boxes (unknown, operator, unbreakable, spawner)");
-		BuildPlacer.enqueue(helper.getLevel(), helper.makeMockPlayer(GameType.SURVIVAL), build, BuildRule.REPLACE, finished -> {});
-
+		helper.assertValueEqual(prepare(helper).skipped(), 4, "skipped boxes (unknown, operator, unbreakable, spawner)");
+		AtomicBoolean done = build(helper, BuildRule.REPLACE);
 		helper.succeedWhen(() -> {
-			// Player facing east: local (x, y, z) -> anchor + (3 - z, y, x - 1).
+			helper.assertTrue(done.get(), "build finished");
 			for (int x = 0; x < 3; x++) {
 				for (int z = 0; z < 3; z++) {
 					helper.assertBlockPresent(Blocks.STONE, 5 - z, 1, 3 + x);
@@ -80,21 +87,18 @@ public class ClawdCrafterGameTest {
 		});
 	}
 
-	/** The preview packet survives encoding and shows the same (non-air) blocks the server would place. */
+	/** The preview packet (also what the block keeps until Generate) round-trips to exactly the server's grid. */
 	@GameTest
-	public void previewMatchesPlacement(GameTestHelper helper) {
-		Payloads.Preview sent = Payloads.Preview.of(prepare(helper));
+	public void previewRoundTrip(GameTestHelper helper) {
+		PreparedBuild build = prepare(helper);
 		RegistryFriendlyByteBuf buf = new RegistryFriendlyByteBuf(Unpooled.buffer(), helper.getLevel().registryAccess());
-		Payloads.Preview.CODEC.encode(buf, sent);
+		Payloads.Preview.CODEC.encode(buf, Payloads.Preview.of(build));
 		Payloads.Preview received = Payloads.Preview.CODEC.decode(buf);
-
-		Map<BlockPos, BlockState> ghosts = new HashMap<>();
-		received.forEachBlock(ghosts::put);
-		helper.assertValueEqual(ghosts.size(), 10, "ghost blocks (air is not shown)");
-		helper.assertValueEqual(ghosts.get(helper.absolutePos(new BlockPos(3, 2, 4))),
-				Blocks.OAK_STAIRS.defaultBlockState().setValue(StairBlock.FACING, Direction.EAST), "rotated stairs");
-		AABB expected = AABB.encapsulatingFullBlocks(helper.absolutePos(new BlockPos(3, 1, 3)), helper.absolutePos(new BlockPos(5, 2, 5)));
-		helper.assertValueEqual(received.volume().bounds(), expected, "boundary box");
+		helper.assertTrue(Arrays.equals(received.grid(), build.grid()), "decoded grid equals the server's grid");
+		helper.assertValueEqual(received.volume(), build.volume(), "volume");
+		helper.assertValueEqual(received.toBuild().blockCount(), build.blockCount(), "block count");
+		helper.assertValueEqual(received.volume().bounds(),
+				AABB.encapsulatingFullBlocks(helper.absolutePos(new BlockPos(3, 1, 3)), helper.absolutePos(new BlockPos(5, 2, 5))), "boundary box");
 		helper.succeed();
 	}
 
@@ -108,7 +112,7 @@ public class ClawdCrafterGameTest {
 	 * </ul>
 	 * Whatever is removed must come back as items (chest contents included) on top of the ClawdCrafter block.
 	 */
-	private static void checkRule(GameTestHelper helper, BuildRule rule, Block expectGold, Block expectDiamond, Block... expectDrops) {
+	private static void checkRule(GameTestHelper helper, BuildRule rule, Block expectGold, Block expectDiamond) {
 		BlockPos gold = new BlockPos(5, 2, 3);
 		BlockPos diamond = new BlockPos(5, 1, 3);
 		BlockPos torch = new BlockPos(4, 1, 4);
@@ -119,43 +123,45 @@ public class ClawdCrafterGameTest {
 		helper.setBlock(torch, Blocks.TORCH);
 		helper.setBlock(chest, Blocks.CHEST);
 		((Container) helper.getLevel().getBlockEntity(helper.absolutePos(chest))).setItem(0, new ItemStack(Items.EMERALD, 5));
-		boolean chestBroken = rule == BuildRule.CLEAR_VOLUME;
-		boolean[] done = {false};
-		BuildPlacer.enqueue(helper.getLevel(), helper.makeMockPlayer(GameType.SURVIVAL), prepare(helper), rule, finished -> done[0] = true);
+		AtomicBoolean done = build(helper, rule);
 		helper.succeedWhen(() -> {
-			helper.assertTrue(done[0], "build finished");
+			helper.assertTrue(done.get(), "build finished");
 			helper.assertBlockPresent(Blocks.STONE, torch);
 			helper.assertBlockPresent(expectGold, gold);
 			helper.assertBlockPresent(expectDiamond, diamond);
-			for (Block drop : expectDrops) {
-				helper.assertTrue(droppedAtAnchor(helper, drop.asItem()), "expected a dropped " + drop);
-			}
+			helper.assertItemEntityPresent(Items.TORCH, ANCHOR, DROP_RANGE);
+			assertDropped(helper, Blocks.GOLD_BLOCK, expectGold != Blocks.GOLD_BLOCK);
+			assertDropped(helper, Blocks.DIAMOND_BLOCK, expectDiamond != Blocks.DIAMOND_BLOCK);
+			boolean chestBroken = rule == BuildRule.CLEAR_VOLUME;
 			helper.assertBlockPresent(chestBroken ? Blocks.AIR : Blocks.CHEST, chest);
-			helper.assertValueEqual(droppedAtAnchor(helper, Items.CHEST) && droppedAtAnchor(helper, Items.EMERALD), chestBroken,
-					"chest and its emeralds dropped");
+			assertDropped(helper, Blocks.CHEST, chestBroken);
+			if (chestBroken) {
+				helper.assertItemEntityCountIs(Items.EMERALD, ANCHOR, DROP_RANGE, 5);
+			}
 		});
 	}
 
-	/** Item entities on top of the ClawdCrafter block (anchor at relative 2,1,4). */
-	private static boolean droppedAtAnchor(GameTestHelper helper, Item item) {
-		AABB top = new AABB(helper.absolutePos(new BlockPos(2, 1, 4))).inflate(1.5);
-		return helper.getLevel().getEntitiesOfClass(ItemEntity.class, top).stream()
-				.anyMatch(entity -> entity.getItem().is(item));
+	private static void assertDropped(GameTestHelper helper, Block block, boolean dropped) {
+		if (dropped) {
+			helper.assertItemEntityPresent(block.asItem(), ANCHOR, DROP_RANGE);
+		} else {
+			helper.assertItemEntityNotPresent(block.asItem(), ANCHOR, DROP_RANGE);
+		}
 	}
 
 	@GameTest
 	public void ruleClearVolume(GameTestHelper helper) {
-		checkRule(helper, BuildRule.CLEAR_VOLUME, Blocks.AIR, Blocks.STONE, Blocks.TORCH, Blocks.GOLD_BLOCK, Blocks.DIAMOND_BLOCK);
+		checkRule(helper, BuildRule.CLEAR_VOLUME, Blocks.AIR, Blocks.STONE);
 	}
 
 	@GameTest
 	public void ruleReplace(GameTestHelper helper) {
-		checkRule(helper, BuildRule.REPLACE, Blocks.GOLD_BLOCK, Blocks.STONE, Blocks.TORCH, Blocks.DIAMOND_BLOCK);
+		checkRule(helper, BuildRule.REPLACE, Blocks.GOLD_BLOCK, Blocks.STONE);
 	}
 
 	@GameTest
 	public void ruleOnlyWherePossible(GameTestHelper helper) {
-		checkRule(helper, BuildRule.ONLY_WHERE_POSSIBLE, Blocks.GOLD_BLOCK, Blocks.DIAMOND_BLOCK, Blocks.TORCH);
+		checkRule(helper, BuildRule.ONLY_WHERE_POSSIBLE, Blocks.GOLD_BLOCK, Blocks.DIAMOND_BLOCK);
 	}
 
 	/**
@@ -166,19 +172,19 @@ public class ClawdCrafterGameTest {
 	@GameTest
 	public void gravityBlocksAndMobs(GameTestHelper helper) {
 		BlockPos sand = new BlockPos(5, 3, 4);
-		helper.setBlock(sand.below(), Blocks.DIRT); // top-edge cell the build clears
+		helper.setBlock(sand.below(), Blocks.DIRT);
 		helper.setBlock(sand, Blocks.SAND);
 		helper.setBlock(sand.above(), Blocks.ANVIL);
 		Pig pig = helper.spawn(EntityTypes.PIG, new BlockPos(4, 1, 4));
-		boolean[] done = {false};
-		BuildPlacer.enqueue(helper.getLevel(), helper.makeMockPlayer(GameType.SURVIVAL), prepare(helper), BuildRule.CLEAR_VOLUME, finished -> done[0] = true);
+		AtomicBoolean done = build(helper, BuildRule.CLEAR_VOLUME);
 		helper.succeedWhen(() -> {
-			helper.assertTrue(done[0], "build finished");
+			helper.assertTrue(done.get(), "build finished");
 			helper.assertBlockPresent(Blocks.AIR, sand);
 			helper.assertBlockPresent(Blocks.AIR, sand.above());
 			helper.assertTrue(helper.getLevel().getEntitiesOfClass(FallingBlockEntity.class, new AABB(helper.absolutePos(sand)).inflate(4)).isEmpty(),
 					"nothing falling");
-			helper.assertTrue(droppedAtAnchor(helper, Items.SAND) && droppedAtAnchor(helper, Items.ANVIL), "sand and anvil dropped as items");
+			helper.assertItemEntityPresent(Items.SAND, ANCHOR, DROP_RANGE);
+			helper.assertItemEntityPresent(Items.ANVIL, ANCHOR, DROP_RANGE);
 			helper.assertTrue(pig.isAlive() && helper.getLevel().noCollision(pig, pig.getBoundingBox()), "pig is free");
 			helper.assertTrue(pig.getY() >= helper.absolutePos(new BlockPos(4, 2, 4)).getY(), "pig stands on the new floor");
 		});
@@ -193,14 +199,10 @@ public class ClawdCrafterGameTest {
 		BlockState foot = Blocks.BED.red().defaultBlockState().setValue(BedBlock.FACING, Direction.WEST).setValue(BedBlock.PART, BedPart.FOOT);
 		helper.setBlock(new BlockPos(4, 2, 3), foot);
 		helper.setBlock(new BlockPos(3, 2, 3), foot.setValue(BedBlock.PART, BedPart.HEAD));
-		boolean[] done = {false};
-		BuildPlacer.enqueue(helper.getLevel(), helper.makeMockPlayer(GameType.SURVIVAL), prepare(helper), BuildRule.CLEAR_VOLUME, finished -> done[0] = true);
+		AtomicBoolean done = build(helper, BuildRule.CLEAR_VOLUME);
 		helper.succeedWhen(() -> {
-			helper.assertTrue(done[0], "build finished");
-			AABB top = new AABB(helper.absolutePos(new BlockPos(2, 1, 4))).inflate(1.5);
-			int beds = helper.getLevel().getEntitiesOfClass(ItemEntity.class, top).stream()
-					.filter(item -> item.getItem().is(Items.BED.red())).mapToInt(item -> item.getItem().getCount()).sum();
-			helper.assertValueEqual(beds, 1, "dropped beds");
+			helper.assertTrue(done.get(), "build finished");
+			helper.assertItemEntityCountIs(Items.BED.red(), ANCHOR, DROP_RANGE, 1);
 		});
 	}
 
@@ -215,15 +217,13 @@ public class ClawdCrafterGameTest {
 		for (int i = 0; i < DropPool.MAX_LOOT_STACKS + 10; i++) {
 			pool.add(new ItemStack(Items.COBBLESTONE, 64));
 		}
-		BlockPos at = helper.absolutePos(new BlockPos(1, 2, 1));
-		DropPool.Result result = pool.spawn(helper.getLevel(), Vec3.atCenterOf(at));
+		BlockPos at = new BlockPos(1, 2, 1);
+		DropPool.Result result = pool.spawn(helper.getLevel(), Vec3.atCenterOf(helper.absolutePos(at)));
 		helper.assertValueEqual(result.droppedStacks(), 300 + DropPool.MAX_LOOT_STACKS, "dropped stacks");
 		helper.assertValueEqual(result.discardedStacks(), 11, "discarded stacks");
-		List<ItemEntity> items = helper.getLevel().getEntitiesOfClass(ItemEntity.class, new AABB(at).inflate(2));
-		helper.assertValueEqual(items.stream().filter(e -> e.getItem().is(Items.DIAMOND)).mapToInt(e -> e.getItem().getCount()).sum(),
-				300 * 64, "diamonds kept");
-		helper.assertTrue(items.stream().anyMatch(e -> e.getItem().is(Items.EMERALD)), "rare loot kept before bulk");
-		items.forEach(ItemEntity::discard);
+		helper.assertItemEntityCountIs(Items.DIAMOND, at, 2, 300 * 64);
+		helper.assertItemEntityPresent(Items.EMERALD, at, 2); // rare loot is kept before bulk
+		helper.getLevel().getEntitiesOfClass(ItemEntity.class, new AABB(helper.absolutePos(at)).inflate(2)).forEach(ItemEntity::discard);
 		helper.succeed();
 	}
 

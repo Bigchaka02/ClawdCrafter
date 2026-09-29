@@ -86,3 +86,25 @@
   - Every tick, `FallingBlockEntity`s in the site become items.
 - Entities: every tick, entities stuck in blocks inside the volume are lifted to the first free space. At the end, frames and paintings that no longer survive drop.
 - Game tests cover each rule (drops, chest contents, soft blocks) plus gravity and mob lifting. Disabling either safeguard makes the test fail.
+
+## 7. Iteration 5 — code check, cleanup, bug fixes
+- **Code review.** Checked every finding; 9 of 10 were real and are fixed:
+  - bed duplication
+  - drop cap deleting chest items
+  - loot lost on server stop
+  - boundary not matching Generate's volume
+  - unbreakable or unobtainable blocks accepted from Claude
+  - no game-mode, spawn-protection or world-border checks
+  - optimistic preview clear on the client
+  - silent skips in unloaded chunks
+  - one `Placement` object per cell (memory)
+
+  The 10th, falling blocks under REPLACE becoming items, is intended behaviour.
+- **Cleanup (reuse / simplification / efficiency / altitude reviews):**
+  - Request and preview ids end stale replies and preview mix-ups.
+  - The block entity stores the compact preview instead of the grid.
+  - Grid building and encoding run off the server thread.
+  - The client decodes into a flat array with index-based neighbour checks.
+  - The screen builds its widgets once and updates them each tick.
+  - Vanilla reach check, `CycleButton` and `textWithWordWrap`, the rule saved by name, vanilla item-entity test assertions.
+- **Tried and reverted:** vanilla gizmos for the boundary. Nothing was drawn in normal play (seen in the client test screenshots), so the hand-drawn lines stayed.

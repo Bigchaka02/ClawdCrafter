@@ -68,7 +68,6 @@ public final class ClaudeBuilder {
 			""";
 
 	private static AnthropicClient client;
-	private static String clientKey;
 
 	private ClaudeBuilder() {}
 
@@ -121,14 +120,14 @@ public final class ClaudeBuilder {
 		throw new GenerationException("Claude returned no build.");
 	}
 
+	/** Built once (the config is read at startup). Environment settings apply; a configured key overrides the env key. */
 	private static synchronized AnthropicClient client(ClawdConfig config) {
-		String key = config.apiKey == null ? "" : config.apiKey.strip();
-		if (client == null || !key.equals(clientKey)) {
-			// Empty key: the SDK falls back to ANTHROPIC_API_KEY / ant auth profiles.
-			client = key.isEmpty()
-					? AnthropicOkHttpClient.fromEnv()
-					: AnthropicOkHttpClient.builder().apiKey(key).build();
-			clientKey = key;
+		if (client == null) {
+			AnthropicOkHttpClient.Builder builder = AnthropicOkHttpClient.builder().fromEnv();
+			if (config.apiKey != null && !config.apiKey.isBlank()) {
+				builder.apiKey(config.apiKey.strip());
+			}
+			client = builder.build();
 		}
 		return client;
 	}

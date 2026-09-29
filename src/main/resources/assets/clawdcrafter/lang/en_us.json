@@ -10,13 +10,13 @@
   "gui.clawdcrafter.generate": "Generate",
   "gui.clawdcrafter.clear": "Clear",
   "gui.clawdcrafter.retry": "Retry",
-  "gui.clawdcrafter.rule": "Build rule: %s",
+  "gui.clawdcrafter.rule": "Build rule",
   "gui.clawdcrafter.rule.clear_volume": "Clear volume",
   "gui.clawdcrafter.rule.clear_volume.desc": "Clears out all the blocks in the constraints and turns them to empty air before building.",
   "gui.clawdcrafter.rule.replace": "Replace blocks with build",
   "gui.clawdcrafter.rule.replace.desc": "Makes the build completely but doesn't clear everything beforehand: it only replaces the existing blocks with the blocks that exist in the projected build.",
   "gui.clawdcrafter.rule.only_where_possible": "Build only where possible",
-  "gui.clawdcrafter.rule.only_where_possible.desc": "Places parts of the projected build wherever there is an empty air block available, without replacing or deleting anything that already exists.",
+  "gui.clawdcrafter.rule.only_where_possible.desc": "Places parts of the projected build wherever there is an empty air block available (grass, flowers, snow, liquids and torches count as empty), without replacing or deleting anything else that already exists.",
   "gui.clawdcrafter.status.pending": "Asking Claude… you can close this screen.",
-  "gui.clawdcrafter.status.preview": "Previewing %s blocks"
+  "gui.clawdcrafter.status.preview": "Previewing \"%s\": %s blocks"
 }

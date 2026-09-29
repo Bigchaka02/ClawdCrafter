@@ -6,7 +6,7 @@ import com.clawdcrafter.ai.BuildPlan.Box;
 import com.clawdcrafter.block.ClawdCrafterBlockEntity;
 import com.clawdcrafter.build.BuildPlacer;
 import com.clawdcrafter.build.BuildPlacer.PreparedBuild;
-import com.clawdcrafter.build.BuildRule;
+import com.clawdcrafter.build.BuildService;
 import com.clawdcrafter.build.BuildVolume;
 import com.clawdcrafter.client.ClawdCrafterScreen;
 import com.clawdcrafter.client.ClientPreview;
@@ -16,15 +16,17 @@ import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.Blocks;
 
 /**
  * Visual end-to-end check on a real client: right-click → screen + live boundary, injected preview (no API
- * key) → ghost blocks, Clear, Generate → blocks placed. Screenshots land in build/run/clientGameTest/screenshots.
+ * key) → ghost blocks, Clear, rule toggle, Generate → blocks placed. Screenshots land in build/run/clientGameTest/screenshots.
  * Needs a display: `./gradlew runClientGameTest` (not part of `build`).
  */
 public class ClawdCrafterClientGameTest implements FabricClientGameTest {
@@ -47,13 +49,14 @@ public class ClawdCrafterClientGameTest implements FabricClientGameTest {
 		try (TestSingleplayerContext singleplayer = context.worldBuilder().create()) {
 			singleplayer.getServer().runCommand("time set noon");
 			BlockPos anchor = singleplayer.getServer().computeOnServer(server -> {
-				ServerPlayer player = server.getPlayerList().getPlayers().getFirst();
+				ServerPlayer player = player(server);
 				BlockPos feet = player.blockPosition();
 				BlockPos block = feet.north(3);
 				player.level().setBlockAndUpdate(block, ClawdCrafter.BLOCK.defaultBlockState());
 				player.teleportTo(feet.getX() + 0.5, feet.getY(), feet.getZ() + 0.5);
 				return block;
 			});
+			BuildVolume volume = new BuildVolume(anchor, Direction.NORTH, 16, 16, 16);
 			context.waitTicks(40);
 
 			// Real right-click on the block → server sends OpenScreen → screen with live boundary.
@@ -64,70 +67,84 @@ public class ClawdCrafterClientGameTest implements FabricClientGameTest {
 			context.waitTicks(10);
 			context.takeScreenshot("1-screen-boundary");
 
-			// Inject a preview exactly as BuildService does after Claude replies (no API key needed).
-			singleplayer.getServer().runOnServer(server -> {
-				ServerPlayer player = server.getPlayerList().getPlayers().getFirst();
-				BuildVolume volume = new BuildVolume(anchor, Direction.NORTH, 16, 16, 16);
-				PreparedBuild build = BuildPlacer.prepare(player.level().registryAccess().lookupOrThrow(Registries.BLOCK), volume, HOUSE, "x");
-				((ClawdCrafterBlockEntity) player.level().getBlockEntity(anchor)).setPending(build);
-				ServerPlayNetworking.send(player, Payloads.Preview.of(build));
-			});
-			context.waitFor(client -> ClientPreview.size() > 0);
+			// Inject a preview through the real hand-off Claude's reply goes through (no API key needed).
+			showPreview(singleplayer, anchor, volume);
+			context.waitFor(client -> ClientPreview.hasPreview(anchor));
 			context.waitTicks(10);
 			context.takeScreenshot("2-screen-with-preview");
 
 			// Close the screen, step back to see the ghosts in the world.
 			context.setScreen(() -> null);
-			singleplayer.getServer().runOnServer(server -> {
-				ServerPlayer player = server.getPlayerList().getPlayers().getFirst();
-				player.teleportTo(anchor.getX() + 0.5, anchor.getY() + 4, anchor.getZ() + 6.5);
-			});
+			singleplayer.getServer().runOnServer(server -> player(server).teleportTo(anchor.getX() + 0.5, anchor.getY() + 4, anchor.getZ() + 6.5));
 			context.waitTicks(20);
 			context.getInput().lookAt(anchor.north(8).above(3));
 			context.waitTicks(10);
 			context.takeScreenshot("3-ghost-preview");
 
-			// Reopen (server-sent, since we're out of click reach) and press Clear.
+			// Walk back within reach, reopen, and press Clear.
+			singleplayer.getServer().runOnServer(server -> player(server).teleportTo(anchor.getX() + 0.5, anchor.getY(), anchor.getZ() + 2.5));
 			reopen(context, singleplayer, anchor);
 			context.clickScreenButton("gui.clawdcrafter.clear");
 			context.waitTicks(2);
-			if (ClientPreview.size() != 0) {
+			if (ClientPreview.hasPreview(anchor)) {
 				throw new AssertionError("Clear did not remove the preview");
 			}
 
-			// Preview again, then Generate places exactly that build.
-			singleplayer.getServer().runOnServer(server -> {
-				ServerPlayer player = server.getPlayerList().getPlayers().getFirst();
-				PreparedBuild build = ((ClawdCrafterBlockEntity) player.level().getBlockEntity(anchor)).pending();
-				ServerPlayNetworking.send(player, Payloads.Preview.of(build));
-			});
-			context.waitFor(client -> ClientPreview.size() > 0);
+			// Preview again, cycle the build rule (screenshot each), then Generate places exactly that build.
+			showPreview(singleplayer, anchor, volume);
+			context.waitFor(client -> ClientPreview.hasPreview(anchor));
 			context.waitTicks(5);
-			// Cycle the build rule toggle through the other two rules (screenshot each), back to Clear volume.
-			context.clickScreenButton("Build rule: Clear volume");
+			Object startRule = cycleRule(context);
 			context.waitTicks(2);
-			context.takeScreenshot("3b-rule-replace");
-			context.clickScreenButton("Build rule: Replace blocks with build");
+			context.takeScreenshot("3b-rule-2");
+			cycleRule(context);
 			context.waitTicks(2);
-			context.takeScreenshot("3c-rule-only-where-possible");
-			context.clickScreenButton("Build rule: Build only where possible");
+			context.takeScreenshot("3c-rule-3");
+			cycleRule(context);
+			if (cycleRule(context) != startRule) { // the 4th press reports the value after three
+				throw new AssertionError("three presses should cycle back to the first rule");
+			}
+			cycleRule(context);
+			cycleRule(context); // back to the starting rule (4 + 2 = two full cycles)
 			context.waitTicks(2);
 			context.clickScreenButton("gui.clawdcrafter.generate");
-			BlockPos cornerLog = new BuildVolume(anchor, Direction.NORTH, 16, 16, 16).toWorld(2, 1, 13);
+			BlockPos cornerLog = volume.toWorld(2, 1, 13);
 			singleplayer.getServer().waitFor(server -> server.overworld().getBlockState(cornerLog).is(Blocks.OAK_LOG));
+			context.waitFor(client -> !ClientPreview.hasPreview(anchor)); // server confirmed with PreviewPlaced
+			singleplayer.getServer().runOnServer(server -> player(server).teleportTo(anchor.getX() + 0.5, anchor.getY() + 4, anchor.getZ() + 6.5));
 			context.waitTicks(40);
+			context.getInput().lookAt(anchor.north(8).above(3));
+			context.waitTicks(10);
 			context.takeScreenshot("4-placed");
-			if (ClientPreview.size() != 0) {
-				throw new AssertionError("Generate should clear the preview");
-			}
 		}
 	}
 
-	private static void reopen(ClientGameTestContext context, TestSingleplayerContext singleplayer, BlockPos anchor) {
-		singleplayer.getServer().runOnServer(server -> {
-			ServerPlayer player = server.getPlayerList().getPlayers().getFirst();
-			ServerPlayNetworking.send(player, new Payloads.OpenScreen(anchor, "a cozy cottage", 16, 16, 16, 64, BuildRule.CLEAR_VOLUME, false));
+	/** Cycles the build rule toggle (the test API's clickScreenButton only finds plain Buttons); returns the value before. */
+	private static Object cycleRule(ClientGameTestContext context) {
+		return context.computeOnClient(client -> {
+			CycleButton<?> toggle = (CycleButton<?>) client.gui.screen().children().stream()
+					.filter(CycleButton.class::isInstance).findFirst().orElseThrow();
+			Object before = toggle.getValue();
+			toggle.mouseScrolled(toggle.getX(), toggle.getY(), 0, -1);
+			return before;
 		});
+	}
+
+	private static ServerPlayer player(MinecraftServer server) {
+		return server.getPlayerList().getPlayers().getFirst();
+	}
+
+	private static void showPreview(TestSingleplayerContext singleplayer, BlockPos anchor, BuildVolume volume) {
+		singleplayer.getServer().runOnServer(server -> {
+			ServerPlayer player = player(server);
+			PreparedBuild build = BuildPlacer.prepare(player.level().registryAccess().lookupOrThrow(Registries.BLOCK), 1, volume, HOUSE, "x");
+			BuildService.showPreview(player, (ClawdCrafterBlockEntity) player.level().getBlockEntity(anchor), build, Payloads.Preview.of(build));
+		});
+	}
+
+	private static void reopen(ClientGameTestContext context, TestSingleplayerContext singleplayer, BlockPos anchor) {
+		singleplayer.getServer().runOnServer(server -> ServerPlayNetworking.send(player(server),
+				Payloads.OpenScreen.of((ClawdCrafterBlockEntity) player(server).level().getBlockEntity(anchor), 64)));
 		context.waitForScreen(ClawdCrafterScreen.class);
 		context.waitTicks(5);
 	}

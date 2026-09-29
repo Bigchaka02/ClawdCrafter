@@ -3,61 +3,62 @@ package com.clawdcrafter.client;
 import com.clawdcrafter.build.BuildVolume;
 import com.clawdcrafter.network.Payloads;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
 
-/** Client-only preview state: the ghost blocks of the last preview, and which block is waiting on Claude. */
+/**
+ * Client-only preview state: the ghost blocks of the last preview, and which block is waiting on Claude.
+ * The screen and the renderer read it; nothing here knows about either.
+ */
 public final class ClientPreview {
 	public record Ghost(BlockPos pos, BlockState state) {}
 
-	private static BuildVolume volume;
-	private static List<Ghost> ghosts = List.of();
-	private static int blockCount;
+	/** One preview, replaced as a whole so readers always see a consistent snapshot. */
+	public record Shown(int id, BuildVolume volume, String title, List<Ghost> ghosts, int blockCount) {}
+
+	private static Shown shown;
 	private static BlockPos pendingFor;
 
 	private ClientPreview() {}
 
 	public static void accept(Payloads.Preview preview) {
-		Map<BlockPos, BlockState> blocks = new HashMap<>();
-		preview.forEachBlock(blocks::put);
-		// Skip ghosts buried inside other solid ghosts: they can't be seen and would only cost frame time.
-		List<Ghost> list = new ArrayList<>();
-		blocks.forEach((pos, state) -> {
-			boolean buried = state.isSolidRender();
-			for (Direction direction : Direction.values()) {
-				BlockState neighbour = blocks.get(pos.relative(direction));
-				buried &= neighbour != null && neighbour.isSolidRender();
+		BuildVolume volume = preview.volume();
+		BlockState[] grid = preview.grid();
+		int sx = volume.sizeX(), sz = volume.sizeZ(), layer = sx * sz;
+		List<Ghost> ghosts = new ArrayList<>();
+		int blockCount = 0;
+		for (int i = 0; i < grid.length; i++) {
+			BlockState state = grid[i];
+			if (state == null || state.isAir()) {
+				continue;
 			}
-			if (!buried) {
-				list.add(new Ghost(pos, state));
+			blockCount++;
+			// Skip ghosts buried inside other solid ghosts (neighbours by index; rotation doesn't change this)
+			// and blocks without a model to draw (fluids, chests, signs).
+			int x = i % sx, z = (i / sx) % sz, y = i / layer;
+			boolean buried = state.isSolidRender()
+					&& solid(grid, x > 0 ? i - 1 : -1) && solid(grid, x < sx - 1 ? i + 1 : -1)
+					&& solid(grid, z > 0 ? i - sx : -1) && solid(grid, z < sz - 1 ? i + sx : -1)
+					&& solid(grid, y > 0 ? i - layer : -1) && solid(grid, i + layer < grid.length ? i + layer : -1);
+			if (!buried && state.getRenderShape() == RenderShape.MODEL) {
+				ghosts.add(new Ghost(volume.toWorld(i), volume.toWorld(state)));
 			}
-		});
-		volume = preview.volume();
-		ghosts = List.copyOf(list);
-		blockCount = blocks.size();
-		if (preview.pos().equals(pendingFor)) {
-			pendingFor = null;
 		}
-		refreshScreen();
+		shown = new Shown(preview.id(), volume, preview.title(), List.copyOf(ghosts), blockCount);
+		setPending(volume.anchor(), false);
+	}
+
+	private static boolean solid(BlockState[] grid, int index) {
+		return index >= 0 && grid[index] != null && grid[index].isSolidRender();
 	}
 
 	/** The server placed the previewed build: its ghosts are no longer needed. */
 	public static void placed(BlockPos pos) {
 		if (hasPreview(pos)) {
-			clear();
+			shown = null;
 		}
-	}
-
-	public static void failed(BlockPos pos) {
-		if (pos.equals(pendingFor)) {
-			pendingFor = null;
-		}
-		refreshScreen();
 	}
 
 	public static void setPending(BlockPos pos, boolean pending) {
@@ -73,37 +74,21 @@ public final class ClientPreview {
 	}
 
 	public static boolean hasPreview(BlockPos pos) {
-		return volume != null && pos.equals(volume.anchor());
+		return shown != null && shown.volume().anchor().equals(pos);
 	}
 
-	/** Number of (non-air) blocks in the preview, including hidden interior ones. */
-	public static int size() {
-		return blockCount;
-	}
-
-	public static List<Ghost> ghosts() {
-		return ghosts;
-	}
-
-	public static BuildVolume volume() {
-		return volume;
+	/** The current preview, or null. */
+	public static Shown shown() {
+		return shown;
 	}
 
 	public static void clear() {
-		volume = null;
-		ghosts = List.of();
-		blockCount = 0;
+		shown = null;
 	}
 
 	/** Forget everything (disconnect / world change). */
 	public static void reset() {
-		clear();
+		shown = null;
 		pendingFor = null;
-	}
-
-	private static void refreshScreen() {
-		if (Minecraft.getInstance().gui.screen() instanceof ClawdCrafterScreen screen) {
-			screen.refresh();
-		}
 	}
 }

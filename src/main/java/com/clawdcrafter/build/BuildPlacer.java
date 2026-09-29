@@ -6,7 +6,6 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -29,7 +28,6 @@ import net.minecraft.world.level.block.Fallable;
 import net.minecraft.world.level.block.FallingBlock;
 import net.minecraft.world.level.block.GameMasterBlock;
 import net.minecraft.world.level.block.LiquidBlock;
-import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -46,7 +44,7 @@ import net.minecraft.world.phys.Vec3;
  *       never touched.</li>
  *   <li>Gravity blocks (sand, gravel, anvils...) resting on the top edge of the volume are broken before they
  *       can fall in; anything that falls into the site anyway is caught.</li>
- *   <li>Mobs, players, boats and other entities left inside new blocks are lifted to the nearest free space;
+ *   <li>Mobs, players, boats and other entities left inside new blocks are lifted straight up to free space;
  *       item frames and paintings that lost their support drop.</li>
  *   <li>All collected items (plus loose items in the site) drop as merged stacks on top of the ClawdCrafter block.</li>
  * </ul>
@@ -59,11 +57,13 @@ public final class BuildPlacer {
 
 	private BuildPlacer() {}
 
-	/** A build ready to preview or place. {@code grid} is in local (unrotated) space; null = not part of the build. */
-	public record PreparedBuild(BuildVolume volume, BlockState[] grid, String title, int boxes, int skipped) {
-		/** Visible (non-air) blocks. */
-		public int blockCount() {
-			return (int) Arrays.stream(grid).filter(state -> state != null && !state.isAir()).count();
+	/**
+	 * A build ready to preview or place. {@code grid} is in local (unrotated) space; null = not part of the build.
+	 * {@code id} identifies the preview request it came from; {@code blockCount} counts visible (non-air) blocks.
+	 */
+	public record PreparedBuild(int id, BuildVolume volume, BlockState[] grid, String title, int boxes, int skipped, int blockCount) {
+		public PreparedBuild(int id, BuildVolume volume, BlockState[] grid, String title, int boxes, int skipped) {
+			this(id, volume, grid, title, boxes, skipped, (int) Arrays.stream(grid).filter(s -> s != null && !s.isAir()).count());
 		}
 	}
 
@@ -79,8 +79,6 @@ public final class BuildPlacer {
 		final PreparedBuild build;
 		final BuildRule rule;
 		final Consumer<Finished> onDone;
-		final Rotation rotation;
-		final Map<BlockState, BlockState> rotated = new IdentityHashMap<>();
 		final AABB site;
 		final int topY;
 		final DropPool drops = new DropPool();
@@ -94,7 +92,6 @@ public final class BuildPlacer {
 			this.rule = rule;
 			this.onDone = onDone;
 			BuildVolume volume = build.volume();
-			this.rotation = volume.rotation();
 			// The volume plus a 1-block margin (2 above): where popped items and falling blocks end up.
 			this.site = volume.bounds().inflate(1).expandTowards(0, 1, 0);
 			this.topY = volume.anchor().getY() + volume.sizeY() - 1;
@@ -109,7 +106,7 @@ public final class BuildPlacer {
 			if (state == null || (rule == BuildRule.ONLY_WHERE_POSSIBLE && state.isAir())) {
 				return null;
 			}
-			return rotated.computeIfAbsent(state, s -> s.rotate(rotation));
+			return build.volume().toWorld(state);
 		}
 	}
 
@@ -117,7 +114,7 @@ public final class BuildPlacer {
 	 * Rasterises the boxes (later boxes overwrite earlier ones). Cells no box touches stay null; what happens to
 	 * them is decided by the {@link BuildRule} at placement time, so one preview works for every rule.
 	 */
-	public static PreparedBuild prepare(HolderLookup<Block> lookup, BuildVolume volume, BuildPlan plan, String fallbackTitle) {
+	public static PreparedBuild prepare(HolderLookup<Block> lookup, int id, BuildVolume volume, BuildPlan plan, String fallbackTitle) {
 		List<BuildPlan.Box> boxes = plan.boxes() == null ? List.of() : plan.boxes();
 		BlockState[] grid = new BlockState[volume.cellCount()];
 		Map<String, BlockState> parsed = new HashMap<>();
@@ -133,17 +130,19 @@ public final class BuildPlacer {
 			int z0 = Math.max(Math.min(box.z1(), box.z2()), 0), z1 = Math.min(Math.max(box.z1(), box.z2()), volume.sizeZ() - 1);
 			for (int y = y0; y <= y1; y++) {
 				for (int z = z0; z <= z1; z++) {
-					for (int x = x0; x <= x1; x++) {
-						boolean shell = x == x0 || x == x1 || y == y0 || y == y1 || z == z0 || z == z1;
-						if (!box.hollow() || shell) {
+					if (!box.hollow() || y == y0 || y == y1 || z == z0 || z == z1) {
+						for (int x = x0; x <= x1; x++) {
 							grid[volume.index(x, y, z)] = state;
 						}
+					} else { // inside a hollow box only the two ends of the row are shell
+						grid[volume.index(x0, y, z)] = state;
+						grid[volume.index(x1, y, z)] = state;
 					}
 				}
 			}
 		}
 		String title = plan.title() == null || plan.title().isBlank() ? fallbackTitle : plan.title();
-		return new PreparedBuild(volume, grid, title, boxes.size(), skipped);
+		return new PreparedBuild(id, volume, grid, title, boxes.size(), skipped);
 	}
 
 	/** Queues a prepared build for placement under the given rule; {@code player} is who edits the world. */
@@ -189,28 +188,36 @@ public final class BuildPlacer {
 			return;
 		}
 		BlockState existing = level.getBlockState(pos);
-		boolean skip = existing == target // already right
-				|| existing.getDestroySpeed(level, pos) < 0 // unbreakable: bedrock, portals, command blocks
-				|| (job.rule == BuildRule.ONLY_WHERE_POSSIBLE && !isSoft(level, pos, existing));
-		if (!skip) {
-			if (!existing.isAir() && !(existing.getBlock() instanceof LiquidBlock)) {
-				// Break, don't delete. Container contents and the other half of doors/beds drop via vanilla
-				// (neighbour updates always drop) and are swept up in finish().
-				job.drops.addAll(Block.getDrops(existing, level, pos, level.getBlockEntity(pos)));
-			}
-			level.setBlock(pos, target, Block.UPDATE_ALL);
+		if (existing != target && (job.rule != BuildRule.ONLY_WHERE_POSSIBLE || isSoft(level, pos, existing))) {
+			replace(job, pos, existing, target);
 		}
 		if (pos.getY() == job.topY && FallingBlock.isFree(level.getBlockState(pos))) {
 			breakGravityColumnAbove(job, pos);
 		}
 	}
 
-	/** What ONLY_WHERE_POSSIBLE may build over: air, grass, flowers, snow, liquids, torches and similar. */
+	/**
+	 * Breaks {@code existing} (keeping its loot; liquids are just replaced) and puts {@code target} there.
+	 * Unbreakable blocks (bedrock, portals, command blocks) are left alone. Container contents and the other
+	 * half of doors/beds drop via vanilla (neighbour updates always drop) and are swept up in finish().
+	 */
+	private static void replace(Job job, BlockPos pos, BlockState existing, BlockState target) {
+		ServerLevel level = job.level;
+		if (existing.getDestroySpeed(level, pos) < 0) {
+			return;
+		}
+		if (!existing.isAir() && !(existing.getBlock() instanceof LiquidBlock)) {
+			job.drops.addAll(Block.getDrops(existing, level, pos, level.getBlockEntity(pos)));
+		}
+		level.setBlock(pos, target, Block.UPDATE_ALL);
+	}
+
+	/**
+	 * What ONLY_WHERE_POSSIBLE may build over. Vanilla's replaceable flag covers air, liquids, grass and snow;
+	 * instant-break blocks without collision add flowers, torches, crops and redstone dust.
+	 */
 	private static boolean isSoft(ServerLevel level, BlockPos pos, BlockState state) {
-		return state.isAir()
-				|| state.canBeReplaced()
-				|| state.getBlock() instanceof LiquidBlock
-				|| state.is(Blocks.SNOW)
+		return state.canBeReplaced()
 				|| (state.getDestroySpeed(level, pos) == 0 && state.getCollisionShape(level, pos).isEmpty());
 	}
 
@@ -223,8 +230,7 @@ public final class BuildPlacer {
 			if (!(state.getBlock() instanceof Fallable) || state.getDestroySpeed(level, pos) < 0 || !level.mayInteract(job.player, pos)) {
 				return;
 			}
-			job.drops.addAll(Block.getDrops(state, level, pos, level.getBlockEntity(pos)));
-			level.setBlock(pos, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+			replace(job, pos, state, Blocks.AIR.defaultBlockState());
 			pos = pos.above();
 		}
 	}
