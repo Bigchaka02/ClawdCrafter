@@ -98,8 +98,8 @@ public final class BuildService {
 			return;
 		}
 		be.setPending(null);
-		int blocks = BuildPlacer.enqueue(player.level(), build, () -> say(player, "Finished \"%s\".".formatted(build.title())));
-		say(player, "Placing \"%s\": %d blocks.".formatted(build.title(), blocks));
+		BuildPlacer.enqueue(player.level(), build, () -> say(player, "Finished \"%s\".".formatted(build.title())));
+		say(player, "Placing \"%s\": %d blocks.".formatted(build.title(), build.blockCount()));
 	}
 
 	/** Returns the block entity if the player may use it right now, otherwise null. */

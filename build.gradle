@@ -50,7 +50,7 @@ fabricApi {
 		createSourceSet = true
 		modId = "clawdcrafter-test"
 		enableGameTests = true
-		enableClientGameTests = false
+		enableClientGameTests = true
 	}
 }
 

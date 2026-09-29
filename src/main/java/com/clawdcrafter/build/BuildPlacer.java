@@ -32,8 +32,9 @@ public final class BuildPlacer {
 
 	/** A build ready to preview or place. {@code grid} is in local (unrotated) space; null = leave untouched. */
 	public record PreparedBuild(BuildVolume volume, BlockState[] grid, String title, int boxes, int skipped) {
+		/** Visible (non-air) blocks; clearing air is not counted. */
 		public int blockCount() {
-			return (int) Arrays.stream(grid).filter(state -> state != null).count();
+			return (int) Arrays.stream(grid).filter(state -> state != null && !state.isAir()).count();
 		}
 	}
 

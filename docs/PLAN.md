@@ -60,3 +60,8 @@
 - The client draws semi-transparent ghost blocks. Once a preview exists, **Generate** appears beneath Preview and places exactly the pending build. **Clear** removes the ghosts; **Refresh** asks again with the same prompt.
 - A red outline shows the build volume: live while the screen is open (it follows X/Y/Z and your facing), and around the preview otherwise.
 - Shared `BuildVolume` math keeps the preview, the boundary and the real placement identical. A game test covers this.
+- Rendering on 26.3: submit geometry from `LevelRenderEvents.COLLECT_SUBMITS` using `SubmitNodeCollector.submitCustomGeometry`.
+  - Ghost blocks use `ModelBlockRenderer.tesselateBlock` with an alpha multiplier and `RenderTypes.translucentMovingBlock()`.
+  - The boundary uses `RenderTypes.lines()`.
+  - Ghosts buried inside other ghosts are skipped.
+- Verified on a real client (Xvfb with software Vulkan) by `ClawdCrafterClientGameTest`.

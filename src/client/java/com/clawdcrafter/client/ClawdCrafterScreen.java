@@ -42,7 +42,7 @@ public class ClawdCrafterScreen extends Screen {
 	}
 
 	private int left() { return (width - WIDTH) / 2; }
-	private int top() { return height / 2 - 70; }
+	private int top() { return Math.max(24, height / 2 - 95); }
 	private int gap() { return (WIDTH - 3 * SIZE_BOX_WIDTH) / 2; }
 
 	@Override
