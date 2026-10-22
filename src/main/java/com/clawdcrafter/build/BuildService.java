@@ -2,29 +2,37 @@ package com.clawdcrafter.build;
 
 import com.anthropic.errors.AnthropicServiceException;
 import com.clawdcrafter.ClawdCrafter;
-import com.clawdcrafter.ai.BuildPlan;
+import com.clawdcrafter.ai.BigSwarm;
 import com.clawdcrafter.ai.ClaudeBuilder;
 import com.clawdcrafter.block.ClawdCrafterBlockEntity;
 import com.clawdcrafter.build.BuildPlacer.PreparedBuild;
 import com.clawdcrafter.config.ClawdConfig;
 import com.clawdcrafter.network.Payloads;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Random;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
 import net.minecraft.world.level.block.Block;
 
 /**
- * Server side of the buttons: Preview/Retry asks Claude (off-thread) and sends the result to the player as
- * ghost blocks; Generate places exactly the preview the player saw (matched by id).
+ * Server side of the buttons: Preview/Retry asks Claude (off-thread, with the block's generation method) and
+ * sends the result to the player as ghost blocks; Generate places exactly the preview the player saw (matched by id).
  */
 public final class BuildService {
+	private static final DateTimeFormatter RUN_NAME = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
 	/** Request ids are unique per server run, so a stale reply can never be mistaken for the current one. */
 	private static int nextRequestId = 1;
 
@@ -53,7 +61,7 @@ public final class BuildService {
 		int sizeX = Math.clamp(request.sizeX(), 1, config.maxDimension);
 		int sizeY = Math.clamp(request.sizeY(), 1, config.maxDimension);
 		int sizeZ = Math.clamp(request.sizeZ(), 1, config.maxDimension);
-		be.setRequest(prompt, sizeX, sizeY, sizeZ, request.rule());
+		be.setRequest(prompt, sizeX, sizeY, sizeZ, request.rule(), request.method());
 		if (be.isBusy()) {
 			say(player, "Already generating — please wait.");
 			return false;
@@ -65,14 +73,38 @@ public final class BuildService {
 		// The build appears on the far side of the block, facing the player.
 		BuildVolume volume = new BuildVolume(pos, player.getDirection(), sizeX, sizeY, sizeZ);
 		HolderLookup<Block> blocks = level.registryAccess().lookupOrThrow(Registries.BLOCK); // frozen: safe off-thread
-		say(player, "Asking Claude for \"%s\" (%d×%d×%d)… this can take a minute.".formatted(prompt, sizeX, sizeY, sizeZ));
-
-		ClaudeBuilder.generate(config, prompt, sizeX, sizeY, sizeZ)
-				// Rasterise and encode on the worker thread too; only the hand-off runs on the server thread.
-				.thenApply(plan -> BuildPlacer.prepare(blocks, id, volume, plan, prompt))
-				.thenApply(build -> new Ready(build, Payloads.Preview.of(build)))
+		CompletableFuture<PreparedBuild> build = switch (request.method()) {
+			case STANDARD -> {
+				say(player, "Asking Claude for \"%s\" (%d×%d×%d)… this can take a minute.".formatted(prompt, sizeX, sizeY, sizeZ));
+				// Rasterise on the worker thread too; only the hand-off runs on the server thread.
+				yield ClaudeBuilder.generate(config, prompt, sizeX, sizeY, sizeZ)
+						.thenApply(plan -> BuildPlacer.prepare(blocks, id, volume, plan, prompt));
+			}
+			case BIG_SWARM -> startSwarm(player, id, volume, blocks, prompt);
+		};
+		build.thenApply(prepared -> new Ready(prepared, Payloads.Preview.of(prepared)))
 				.whenCompleteAsync((ready, error) -> complete(player, pos, id, prompt, ready, error), level.getServer());
 		return true;
+	}
+
+	/** Big Swarm: nine agents, progress in chat; the transcript and pictures are saved under the game directory. */
+	private static CompletableFuture<PreparedBuild> startSwarm(ServerPlayer player, int id, BuildVolume volume, HolderLookup<Block> blocks, String prompt) {
+		ClawdConfig config = ClawdCrafter.CONFIG;
+		MinecraftServer server = player.level().getServer();
+		Path gameDir = FabricLoader.getInstance().getGameDir();
+		Path runDir = gameDir.resolve("clawdcrafter/swarm/" + LocalDateTime.now().format(RUN_NAME) + "-" + id);
+		say(player, "Big Swarm started for \"%s\" (%d×%d×%d): 9 agents (%s), %d steps. This takes several minutes; progress shows here."
+				.formatted(prompt, volume.sizeX(), volume.sizeY(), volume.sizeZ(), config.swarmModel, BigSwarm.STEPS));
+		return new BigSwarm(ClaudeBuilder.swarmClient(config), blocks, id, volume, prompt, runDir, new Random(),
+				message -> server.execute(() -> say(player, message)))
+				.start()
+				.thenApply(result -> {
+					BigSwarm.Option chosen = result.chosen();
+					String summary = "Big Swarm chose option %s (%s) with %d points. Transcript and pictures: %s"
+							.formatted(chosen.label(), chosen.name(), chosen.points(), gameDir.relativize(runDir));
+					server.execute(() -> say(player, summary));
+					return chosen.build();
+				});
 	}
 
 	private record Ready(PreparedBuild build, Payloads.Preview preview) {}
@@ -97,8 +129,8 @@ public final class BuildService {
 	public static void showPreview(ServerPlayer player, ClawdCrafterBlockEntity be, PreparedBuild build, Payloads.Preview preview) {
 		be.setPending(preview);
 		send(player, preview);
-		say(player, "Preview of \"%s\" ready: %d blocks from %d boxes%s. Right-click the block to Generate, Clear or Retry."
-				.formatted(build.title(), build.blockCount(), build.boxes(),
+		say(player, "Preview of \"%s\" ready: %d blocks%s%s. Right-click the block to Generate, Clear or Retry."
+				.formatted(build.title(), build.blockCount(), build.boxes() > 0 ? " from " + build.boxes() + " boxes" : "",
 						build.skipped() > 0 ? " (" + build.skipped() + " skipped: invalid block)" : ""));
 	}
 

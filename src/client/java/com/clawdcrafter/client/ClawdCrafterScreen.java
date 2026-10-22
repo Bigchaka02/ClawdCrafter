@@ -3,12 +3,14 @@ package com.clawdcrafter.client;
 import com.clawdcrafter.block.ClawdCrafterBlockEntity;
 import com.clawdcrafter.build.BuildRule;
 import com.clawdcrafter.build.BuildVolume;
+import com.clawdcrafter.build.GenerationMethod;
 import com.clawdcrafter.network.Payloads;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -17,7 +19,7 @@ import net.minecraft.network.chat.Component;
 /**
  * Prompt box, three size boxes (X / Y / Z), then:
  * <pre>
- * [Preview]                         [Build rule: ...]
+ * [Preview][Method]                [Build rule: ...]
  * [Generate][Clear][Retry]           small grey rule description
  * status
  * </pre>
@@ -28,6 +30,7 @@ public class ClawdCrafterScreen extends Screen {
 	private static final int WIDTH = 360;
 	private static final int SIZE_BOX_WIDTH = 100;
 	private static final int PREVIEW_WIDTH = 80;
+	private static final int METHOD_WIDTH = 76;
 	private static final int GENERATE_WIDTH = 60;
 	private static final int SMALL_BUTTON_WIDTH = 46;
 	private static final int GAP = 4;
@@ -43,6 +46,7 @@ public class ClawdCrafterScreen extends Screen {
 	private String prompt;
 	private final String[] sizes;
 	private BuildRule rule;
+	private GenerationMethod method;
 
 	private Button preview;
 	private Button generate;
@@ -55,6 +59,7 @@ public class ClawdCrafterScreen extends Screen {
 		this.prompt = data.prompt();
 		this.sizes = new String[] {Integer.toString(data.sizeX()), Integer.toString(data.sizeY()), Integer.toString(data.sizeZ())};
 		this.rule = data.rule();
+		this.method = data.method();
 		ClientPreview.setPending(data.pos(), data.busy());
 	}
 
@@ -86,9 +91,14 @@ public class ClawdCrafterScreen extends Screen {
 			addRenderableWidget(box);
 		}
 
-		// Row 1: Preview on the left wall, build rule toggle on the right wall.
+		// Row 1: Preview on the left wall, then the generation method, build rule toggle on the right wall.
 		preview = addRenderableWidget(Button.builder(Component.translatable("gui.clawdcrafter.preview"), b -> requestPreview())
 				.bounds(left, top + 84, PREVIEW_WIDTH, 20).build());
+		addRenderableWidget(CycleButton.builder(GenerationMethod::displayName, method).withValues(GenerationMethod.values())
+				.displayOnlyValue()
+				.withTooltip(value -> Tooltip.create(value.description()))
+				.create(left + PREVIEW_WIDTH + GAP, top + 84, METHOD_WIDTH, 20, Component.translatable("gui.clawdcrafter.method"),
+						(button, value) -> method = value));
 		addRenderableWidget(CycleButton.builder(BuildRule::displayName, rule).withValues(BuildRule.values())
 				.create(ruleX(), top + 84, RULE_WIDTH, 20, Component.translatable("gui.clawdcrafter.rule"), (button, value) -> rule = value));
 
@@ -120,7 +130,7 @@ public class ClawdCrafterScreen extends Screen {
 
 	/** Preview and Retry: ask the server (and Claude) for a build with the current values. */
 	private void requestPreview() {
-		ClientPlayNetworking.send(new Payloads.RequestPreview(data.pos(), prompt, size(0), size(1), size(2), rule));
+		ClientPlayNetworking.send(new Payloads.RequestPreview(data.pos(), prompt, size(0), size(1), size(2), rule, method));
 		ClientPreview.setPending(data.pos(), true);
 		updateButtons();
 	}
@@ -170,7 +180,7 @@ public class ClawdCrafterScreen extends Screen {
 
 		ClientPreview.Shown shown = ClientPreview.shown();
 		Component status = ClientPreview.isPending(data.pos())
-				? Component.translatable("gui.clawdcrafter.status.pending")
+				? Component.translatable(method == GenerationMethod.BIG_SWARM ? "gui.clawdcrafter.status.swarm" : "gui.clawdcrafter.status.pending")
 				: ClientPreview.hasPreview(data.pos())
 						? Component.translatable("gui.clawdcrafter.status.preview", shown.title(), shown.blockCount())
 						: null;

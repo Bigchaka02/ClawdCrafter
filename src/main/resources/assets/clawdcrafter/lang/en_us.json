@@ -17,6 +17,12 @@
   "gui.clawdcrafter.rule.replace.desc": "Makes the build completely but doesn't clear everything beforehand: it only replaces the existing blocks with the blocks that exist in the projected build.",
   "gui.clawdcrafter.rule.only_where_possible": "Build only where possible",
   "gui.clawdcrafter.rule.only_where_possible.desc": "Places parts of the projected build wherever there is an empty air block available (grass, flowers, snow, liquids and torches count as empty), without replacing or deleting anything else that already exists.",
+  "gui.clawdcrafter.method": "Method",
+  "gui.clawdcrafter.method.standard": "Standard",
+  "gui.clawdcrafter.method.standard.desc": "One Claude request designs the whole build. Takes about a minute.",
+  "gui.clawdcrafter.method.big_swarm": "Big Swarm",
+  "gui.clawdcrafter.method.big_swarm.desc": "Nine Claude Haiku agents in three groups write a design brief, draw, critique and vote on schematics, merge six block arrays and rank pictures of the results. Takes several minutes.",
   "gui.clawdcrafter.status.pending": "Asking Claude… you can close this screen.",
+  "gui.clawdcrafter.status.swarm": "Big Swarm at work: follow it in chat. You can close this screen.",
   "gui.clawdcrafter.status.preview": "Previewing \"%s\": %s blocks"
 }

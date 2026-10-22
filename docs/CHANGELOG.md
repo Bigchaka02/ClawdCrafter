@@ -72,3 +72,21 @@ Nothing has been released yet. Everything below ships together as version 1.0.0,
 - The README is rewritten for players.
 - New: `docs/DEVELOPMENT.md` (developer guide), this changelog and `docs/HANDOFF.md` (briefing for a new session).
 - `docs/PLAN.md` is retired. Its research notes moved to the developer guide.
+
+### Step 8: Big Swarm generation method
+- A **method** toggle next to Preview chooses between **Standard** (one request) and **Big Swarm**. The method is saved per block, and its tooltip explains it.
+- Big Swarm: nine agents (`claude-haiku-5-5` at medium effort, configurable with `swarmModel` and `swarmEffort`) in three groups of three, working through ten steps:
+  1. brief drafts and a merged brief;
+  2. three independent schematics;
+  3. cross-critiques;
+  4. revisions;
+  5. a discussion and a ranked vote;
+  6. a review against the brief and final tweaks;
+  7. six block arrays;
+  8. a per-cell majority merge with tie votes;
+  9. blind pictures of all seven arrays;
+  10. a 3/2/1-point ranking by all nine agents.
+- Progress is shown in chat. Each run saves a transcript and the seven pictures under `clawdcrafter/swarm/`.
+- An agent whose request fails is left out instead of stopping the run.
+- Offline game tests cover the whole pipeline with scripted agents, including a failing agent, and the real request shape.
+- Not yet run against the live API.

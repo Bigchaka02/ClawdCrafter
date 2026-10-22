@@ -13,17 +13,19 @@ Paste this as the first message, with your request at the end:
 ClawdCrafter is a Fabric mod for Minecraft Java 26.3 that adds one block:
 
 1. Right-clicking the block opens a screen with a prompt box and three size boxes (X × Y × Z, 16 × 16 × 16 by default).
-2. **Preview** sends the prompt to Claude, from the server, through the Anthropic Java SDK. Claude replies with a list of `/fill`-style boxes.
-3. The player sees the reply as semi-transparent ghost blocks inside a thin red boundary.
+2. **Preview** sends the prompt to Claude, from the server, through the Anthropic Java SDK. It uses one of two methods:
+   - **Standard:** one request; Claude replies with a list of `/fill`-style boxes.
+   - **Big Swarm:** nine Claude Haiku 5.5 agents in three groups brief, draw, critique, vote, convert, merge and rank (README → Big Swarm; DEVELOPMENT §4.9).
+3. The player sees the result as semi-transparent ghost blocks inside a thin red boundary.
 4. **Generate** places the build. The chosen **build rule** decides what happens to blocks already in the area. Removed blocks are broken for their drops, which land on top of the ClawdCrafter block.
 
-## Status (2026-09-29)
+## Status (2026-10-22)
 
 - **Features:** everything the owner asked for is implemented (listed below).
 - **Tests:**
-  - `./gradlew build` passes, including 9 headless server game tests.
+  - `./gradlew build` passes, including 12 headless server game tests. Three of them run the whole Big Swarm with scripted agents.
   - The opt-in client game test passes on a real client running headless, and produced the README screenshots.
-- **Not verified yet: a live Claude call.** No API key was available. Building the request and parsing a reply were tested offline (`claudeRequestBuildsOffline`), but a real request never ran. Do this first once a key is available.
+- **Not verified yet: a live Claude call, for either method.** No API key was available. Requests and reply parsing were tested offline (`claudeRequestBuildsOffline`, `swarmRequestBuildsOffline`), but a real request never ran. Do this first once a key is available. For Big Swarm, read the saved `transcript.md` to see how each step behaved.
 - **Version:** 1.0.0 in `gradle.properties`. Not tagged or released.
 - **Git:** all work is on `main`, authored by the owner.
 
@@ -70,6 +72,7 @@ Keep these working:
 | Soft blocks | Build only where possible may also replace grass, snow, flowers, liquids and torches. |
 | Removing blocks | Under every rule, a removed or replaced non-air block is broken as if by hand, so it drops its items and container contents. Liquids are just replaced. |
 | Entities and gravity | Mobs and other entities, boats, minecarts, and falling or movable blocks in or just above the area are handled: lifted, caught or dropped as items. |
+| Big Swarm | <ul><li>A generation method with 9 Claude Haiku 5.5 agents at medium effort, in 3 groups of 3, working in parallel and passing work to each other.</li><li>Group 1 writes one long, detailed brief.</li><li>Group 2 each draws a block-by-block schematic on its own, trades it to the other two for critique, and improves its own.</li><li>Group 3 discusses and votes on the most accurate, buildable schematic.</li><li>Group 1 checks the winner against the brief and makes the final tweaks.</li><li>Groups 1 and 2 each make a 3D array: 6 arrays.</li><li>Group 3 makes a 7th by most common block per cell, voting on ties.</li><li>All 7 are drawn blind as pictures; all 9 agents rank their top 3; the most points is built.</li><li>The mod draws the pictures, because models can't produce images.</li></ul> |
 
 ## Setting up a fresh environment
 
@@ -88,7 +91,9 @@ export JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64   # needed if another JDK is
 
 | To change | Look in (`src/main/java/com/clawdcrafter/` unless noted) |
 |---|---|
-| Build quality: Claude's instructions | `ai/ClaudeBuilder.java`, `SYSTEM_PROMPT` |
+| Build quality: Claude's instructions | `ai/ClaudeBuilder.java`, `SYSTEM_PROMPT` (Standard), `FRAME`/`BOXES` (shared) |
+| Big Swarm steps and each agent's instructions | `ai/BigSwarm.java` (the role texts are constants at the top) |
+| Pictures the swarm ranks | `build/IsometricRenderer.java` |
 | The format Claude replies in | `ai/BuildPlan.java` |
 | Model, effort, limits | `config/ClawdConfig.java` |
 | Where a build goes, and its rotation | `build/BuildVolume.java` |
@@ -110,12 +115,19 @@ export JAVA_HOME=/usr/lib/jvm/java-25-openjdk-amd64   # needed if another JDK is
 - **Break, don't delete.** Drops come from vanilla `Block.getDrops` and vanilla neighbour updates, with no hand-written drop logic.
 - **One shared transform.** Placement, the preview and the boundary all use `BuildVolume`, so they can't disagree.
 - **The boundary is drawn as plain lines**, because vanilla gizmos didn't render in normal play.
+- **Big Swarm agents are stateless requests.** Each one gets its role in the system prompt, and the work of earlier steps is pasted into its message.
+- **Schematics are text; arrays are boxes.** Schematics (palette plus layer maps or ranges) are what agents can read, critique and vote on. The 6 "3D arrays" are exact `/fill` boxes, expanded into grids by the mod, so they scale to 128³. The majority vote runs on the grids.
+- **The mod renders the swarm's pictures** (`IsometricRenderer`, front and back views). It labels them A–G in random order so the ranking is blind.
+- **The swarm survives single failures.** A failed agent is left out. Steps with a fallback (critiques, revisions, reviews, the final tweak, tie votes) continue without it.
 
 ## Open items and ideas
 
 None of these were requested. Ask the owner, or use judgment, before building them.
 
-1. **Live test with an API key** (do first): check build quality, speed and cost, and tune `SYSTEM_PROMPT` if needed.
+1. **Live test with an API key** (do first), for both methods.
+   - Check build quality, speed and cost.
+   - Tune `SYSTEM_PROMPT` and the swarm's role texts if needed.
+   - For Big Swarm, check in `transcript.md` that the schematics stay inside the volume and that the six arrays mostly agree. Many ties mean the schematic format is ambiguous.
 2. **License:** none has been chosen, and `fabric.mod.json` has no license field.
 3. **Placeholder:** the crafting recipe. The texture is a 16 × 16 version of the mascot image the owner supplied.
 4. **Possible features:**
@@ -136,5 +148,5 @@ None of these were requested. Ask the owner, or use judgment, before building th
 - **Drops:** don't add drops for the other half of beds or doors by hand, because vanilla already drops it. Doing so caused a bed duplication bug.
 - **Client game tests:**
   - A left click is `pressMouse(1)` under SDL3. To right-click, use `pressKey(options -> options.keyUse)`.
-  - `clickScreenButton` can't find a `CycleButton`.
+  - `clickScreenButton` can't find a `CycleButton`. The screen has two of them (method and rule), so pick one by the type of its value.
 - **Headless rendering:** OpenGL fails under Xvfb, while software Vulkan (lavapipe) works.

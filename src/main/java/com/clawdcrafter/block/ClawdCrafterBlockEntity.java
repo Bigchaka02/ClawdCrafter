@@ -2,6 +2,7 @@ package com.clawdcrafter.block;
 
 import com.clawdcrafter.ClawdCrafter;
 import com.clawdcrafter.build.BuildRule;
+import com.clawdcrafter.build.GenerationMethod;
 import com.clawdcrafter.network.Payloads;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -10,7 +11,7 @@ import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
 
 /**
- * Remembers the last prompt, size and build rule (saved), plus the in-flight Claude request and the previewed
+ * Remembers the last prompt, size, build rule and generation method (saved), plus the in-flight Claude request and the previewed
  * build waiting for Generate (not saved: a restart simply drops them).
  */
 public class ClawdCrafterBlockEntity extends BlockEntity {
@@ -21,6 +22,7 @@ public class ClawdCrafterBlockEntity extends BlockEntity {
 	private int sizeY = DEFAULT_SIZE;
 	private int sizeZ = DEFAULT_SIZE;
 	private BuildRule buildRule = BuildRule.CLEAR_VOLUME;
+	private GenerationMethod method = GenerationMethod.STANDARD;
 	/** Id of the Claude request in flight, 0 when idle. */
 	private int activeRequest;
 	private Payloads.Preview pending;
@@ -34,6 +36,7 @@ public class ClawdCrafterBlockEntity extends BlockEntity {
 	public int sizeY() { return sizeY; }
 	public int sizeZ() { return sizeZ; }
 	public BuildRule buildRule() { return buildRule; }
+	public GenerationMethod method() { return method; }
 	public boolean isBusy() { return activeRequest != 0; }
 	/** The last previewed build, placed by Generate. */
 	public Payloads.Preview pending() { return pending; }
@@ -52,11 +55,12 @@ public class ClawdCrafterBlockEntity extends BlockEntity {
 		return true;
 	}
 
-	public void setRequest(String prompt, int sizeX, int sizeY, int sizeZ, BuildRule buildRule) {
+	public void setRequest(String prompt, int sizeX, int sizeY, int sizeZ, BuildRule buildRule, GenerationMethod method) {
 		this.prompt = prompt;
 		this.sizeX = sizeX;
 		this.sizeY = sizeY;
 		this.sizeZ = sizeZ;
+		this.method = method;
 		setBuildRule(buildRule);
 	}
 
@@ -73,6 +77,7 @@ public class ClawdCrafterBlockEntity extends BlockEntity {
 		output.putInt("size_y", sizeY);
 		output.putInt("size_z", sizeZ);
 		output.store("build_rule", BuildRule.CODEC, buildRule);
+		output.store("method", GenerationMethod.CODEC, method);
 	}
 
 	@Override
@@ -83,5 +88,6 @@ public class ClawdCrafterBlockEntity extends BlockEntity {
 		sizeY = input.getIntOr("size_y", DEFAULT_SIZE);
 		sizeZ = input.getIntOr("size_z", DEFAULT_SIZE);
 		buildRule = input.read("build_rule", BuildRule.CODEC).orElse(BuildRule.CLEAR_VOLUME);
+		method = input.read("method", GenerationMethod.CODEC).orElse(GenerationMethod.STANDARD);
 	}
 }

@@ -19,6 +19,9 @@ public final class ClawdConfig {
 	public String model = "claude-sonnet-5-5";
 	/** low | medium | high | xhigh | max — higher is slower and more detailed. */
 	public String effort = "medium";
+	/** Model and effort of each of the nine Big Swarm agents. */
+	public String swarmModel = "claude-haiku-5-5";
+	public String swarmEffort = "medium";
 	/** Upper bound for each of the three dimensions (1..128). */
 	public int maxDimension = 64;
 	/** Blocks placed per server tick (20 ticks = 1 second). */

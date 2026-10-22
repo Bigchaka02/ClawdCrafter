@@ -6,7 +6,8 @@
   "environment": "*",
   "entrypoints": {
     "fabric-gametest": [
-      "com.clawdcrafter.test.ClawdCrafterGameTest"
+      "com.clawdcrafter.test.ClawdCrafterGameTest",
+      "com.clawdcrafter.test.BigSwarmGameTest"
     ],
     "fabric-client-gametest": [
       "com.clawdcrafter.test.ClawdCrafterClientGameTest"

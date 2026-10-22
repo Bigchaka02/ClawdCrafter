@@ -6,8 +6,10 @@ import com.clawdcrafter.ai.BuildPlan.Box;
 import com.clawdcrafter.block.ClawdCrafterBlockEntity;
 import com.clawdcrafter.build.BuildPlacer;
 import com.clawdcrafter.build.BuildPlacer.PreparedBuild;
+import com.clawdcrafter.build.BuildRule;
 import com.clawdcrafter.build.BuildService;
 import com.clawdcrafter.build.BuildVolume;
+import com.clawdcrafter.build.GenerationMethod;
 import com.clawdcrafter.client.ClawdCrafterScreen;
 import com.clawdcrafter.client.ClientPreview;
 import com.clawdcrafter.network.Payloads;
@@ -25,8 +27,8 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.Blocks;
 
 /**
- * Visual end-to-end check on a real client: right-click → screen + live boundary, injected preview (no API
- * key) → ghost blocks, Clear, rule toggle, Generate → blocks placed. Screenshots land in build/run/clientGameTest/screenshots.
+ * Visual end-to-end check on a real client: right-click → screen + live boundary, method toggle, injected
+ * preview (no API key) → ghost blocks, Clear, rule toggle, Generate → blocks placed. Screenshots land in build/run/clientGameTest/screenshots.
  * Needs a display: `./gradlew runClientGameTest` (not part of `build`).
  */
 public class ClawdCrafterClientGameTest implements FabricClientGameTest {
@@ -64,8 +66,22 @@ public class ClawdCrafterClientGameTest implements FabricClientGameTest {
 			context.waitTicks(5);
 			context.getInput().pressKey(options -> options.keyUse);
 			context.waitForScreen(ClawdCrafterScreen.class);
+			// Switch the method to Big Swarm and hover it, so the screenshot shows the toggle and its tooltip.
+			int[] methodButton = context.computeOnClient(client -> {
+				CycleButton<?> method = client.gui.screen().children().stream()
+						.filter(child -> child instanceof CycleButton<?> button && button.getValue() instanceof GenerationMethod)
+						.map(child -> (CycleButton<?>) child).findFirst().orElseThrow();
+				method.mouseScrolled(method.getX(), method.getY(), 0, -1);
+				if (method.getValue() != GenerationMethod.BIG_SWARM) {
+					throw new AssertionError("the method toggle should move from Standard to Big Swarm");
+				}
+				int scale = client.getWindow().getGuiScale();
+				return new int[] {(method.getX() + 20) * scale, (method.getY() + 10) * scale};
+			});
+			context.getInput().setCursorPos(methodButton[0], methodButton[1]);
 			context.waitTicks(10);
 			context.takeScreenshot("1-screen-boundary");
+			context.getInput().setCursorPos(0, 0);
 
 			// Inject a preview through the real hand-off Claude's reply goes through (no API key needed).
 			showPreview(singleplayer, anchor, volume);
@@ -122,8 +138,9 @@ public class ClawdCrafterClientGameTest implements FabricClientGameTest {
 	/** Cycles the build rule toggle (the test API's clickScreenButton only finds plain Buttons); returns the value before. */
 	private static Object cycleRule(ClientGameTestContext context) {
 		return context.computeOnClient(client -> {
-			CycleButton<?> toggle = (CycleButton<?>) client.gui.screen().children().stream()
-					.filter(CycleButton.class::isInstance).findFirst().orElseThrow();
+			CycleButton<?> toggle = client.gui.screen().children().stream()
+					.filter(child -> child instanceof CycleButton<?> button && button.getValue() instanceof BuildRule)
+					.map(child -> (CycleButton<?>) child).findFirst().orElseThrow();
 			Object before = toggle.getValue();
 			toggle.mouseScrolled(toggle.getX(), toggle.getY(), 0, -1);
 			return before;

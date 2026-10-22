@@ -5,6 +5,7 @@ import com.clawdcrafter.block.ClawdCrafterBlockEntity;
 import com.clawdcrafter.build.BuildPlacer.PreparedBuild;
 import com.clawdcrafter.build.BuildRule;
 import com.clawdcrafter.build.BuildVolume;
+import com.clawdcrafter.build.GenerationMethod;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
 import java.util.ArrayList;
@@ -30,9 +31,12 @@ public final class Payloads {
 
 	private Payloads() {}
 
-	/** S2C: open the screen pre-filled with the block's last prompt, size and build rule; {@code maxSize} is the server's limit. */
-	public record OpenScreen(BlockPos pos, String prompt, int sizeX, int sizeY, int sizeZ, int maxSize, BuildRule rule, boolean busy)
-			implements CustomPacketPayload {
+	/**
+	 * S2C: open the screen pre-filled with the block's last prompt, size, build rule and generation method;
+	 * {@code maxSize} is the server's limit.
+	 */
+	public record OpenScreen(BlockPos pos, String prompt, int sizeX, int sizeY, int sizeZ, int maxSize, BuildRule rule,
+			GenerationMethod method, boolean busy) implements CustomPacketPayload {
 		public static final Type<OpenScreen> TYPE = new Type<>(ClawdCrafter.id("open_screen"));
 		public static final StreamCodec<RegistryFriendlyByteBuf, OpenScreen> CODEC = StreamCodec.composite(
 				BlockPos.STREAM_CODEC, OpenScreen::pos,
@@ -42,11 +46,13 @@ public final class Payloads {
 				ByteBufCodecs.VAR_INT, OpenScreen::sizeZ,
 				ByteBufCodecs.VAR_INT, OpenScreen::maxSize,
 				BuildRule.STREAM_CODEC, OpenScreen::rule,
+				GenerationMethod.STREAM_CODEC, OpenScreen::method,
 				ByteBufCodecs.BOOL, OpenScreen::busy,
 				OpenScreen::new);
 
 		public static OpenScreen of(ClawdCrafterBlockEntity be, int maxSize) {
-			return new OpenScreen(be.getBlockPos(), be.prompt(), be.sizeX(), be.sizeY(), be.sizeZ(), maxSize, be.buildRule(), be.isBusy());
+			return new OpenScreen(be.getBlockPos(), be.prompt(), be.sizeX(), be.sizeY(), be.sizeZ(), maxSize, be.buildRule(),
+					be.method(), be.isBusy());
 		}
 
 		@Override
@@ -55,8 +61,8 @@ public final class Payloads {
 		}
 	}
 
-	/** C2S: Preview / Retry pressed — ask Claude for a build. The rule is remembered for next time. */
-	public record RequestPreview(BlockPos pos, String prompt, int sizeX, int sizeY, int sizeZ, BuildRule rule)
+	/** C2S: Preview / Retry pressed — ask Claude for a build. The rule and method are remembered for next time. */
+	public record RequestPreview(BlockPos pos, String prompt, int sizeX, int sizeY, int sizeZ, BuildRule rule, GenerationMethod method)
 			implements CustomPacketPayload {
 		public static final Type<RequestPreview> TYPE = new Type<>(ClawdCrafter.id("request_preview"));
 		public static final StreamCodec<RegistryFriendlyByteBuf, RequestPreview> CODEC = StreamCodec.composite(
@@ -66,6 +72,7 @@ public final class Payloads {
 				ByteBufCodecs.VAR_INT, RequestPreview::sizeY,
 				ByteBufCodecs.VAR_INT, RequestPreview::sizeZ,
 				BuildRule.STREAM_CODEC, RequestPreview::rule,
+				GenerationMethod.STREAM_CODEC, RequestPreview::method,
 				RequestPreview::new);
 
 		@Override
