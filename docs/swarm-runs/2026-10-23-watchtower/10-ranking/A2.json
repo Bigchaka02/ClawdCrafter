@@ -1,0 +1,9 @@
+{
+  "agent": "A2",
+  "ranking": [
+    "F",
+    "D",
+    "A"
+  ],
+  "reasons": "Only three distinct renders exist: A, B and C are byte-identical, D and E are byte-identical, and F and G are byte-identical. F (and its duplicate G) ranks first: it draws every block as a cube with grid lines, which is how the brief render rules and counts work, and it labels the panels Front, from south-east and Back, from north-west as render checklist section 17 asks. The roof reads as six stepped spruce tiers with a 2 x 2 apex, the 10-wide walls and 12-wide eave are visible, the path, two standing lanterns, poppies and the four windows are in place, and the stone and moss palette matches section 12. D (and E) has the same cube render and the same geometry but no panel labels, so it ranks second. A (and B, C) has clean, appealing smooth shading, but it draws no cubes, so the block counts, the band and quoin structure and the cell-level detail cannot be checked against the brief, and it has no labels, so it ranks third. Visual appeal favours A, but accuracy to the brief is weighted first."
+}
