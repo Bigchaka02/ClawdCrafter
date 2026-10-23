@@ -1,9 +1,3 @@
-# Big Swarm: standalone test prompt
-
-A prompt for testing the Big Swarm idea outside Minecraft, in a Claude chat that can run subagents, code and image tools (for example Claude Code or Cowork with Opus). Fill in BUILD REQUEST and SIZE, then paste everything below the line.
-
----
-
 # Big Swarm: a nine-agent Minecraft build design test
 
 ## Inputs
@@ -30,7 +24,7 @@ You are the coordinator. You run a swarm of nine subagents through the ten steps
 - **Each task includes:** the agent's name and group, its role, the shared rules below, and everything it needs for that task.
 - **Same agents throughout:** if you can continue an existing subagent, so it remembers its earlier work, keep the same nine for the whole run. Otherwise start a fresh one with the same name each time and include its own earlier work.
 - **Communication:** agents talk only through you and the run folder. What one agent produces is handed to the next.
-- **Tools:** agents may use every tool they have: running code (Python), reading and writing files, viewing images, and any image tool.
+- **Tools:** agents may use every tool they have: running code (Python), reading and writing files, viewing images, and any image tool. Every agent generates images itself, as described in "How agents make images" below.
 
 ## Shared rules (give these to every agent)
 - **Coordinates:**
@@ -43,6 +37,18 @@ You are the coordinator. You run a swarm of nine subagents through the ten steps
   - Doors, beds and tall plants need both halves. Sand and gravel must be supported.
   - Don't use blocks a survival player can't get: no command blocks, barriers, bedrock, spawners or portals.
 - **Bounds:** everything fits inside W × H × D, and nothing goes outside it. Empty space inside the volume is `minecraft:air`.
+
+## How agents make images (give this to every agent that makes or views images)
+- **Method: draw with code.** Write a short Python script (Pillow or matplotlib) that reads the schematic or array and draws it, save the result as a PNG, then open the image and look at it. Any agent that can run code can do this, Haiku included.
+- **Image tools:** if you also have an image-generation tool, use it only when it can reproduce the data exactly. A picture that doesn't match the blocks is useless here.
+- **Same rendering rules for every image,** so all images can be compared:
+  - 1600 × 900 pixels, light grey background;
+  - two isometric views side by side: on the left the front, seen from the south-east; on the right the back, seen from the north-west;
+  - the outline of the volume's floor drawn in;
+  - every non-air block drawn as a cube at its exact position, with nothing added, smoothed or "fixed";
+  - each block a solid colour close to its real Minecraft colour, the same colour for the same block in every image;
+  - top faces lighter and sides darker; glass semi-transparent.
+- **Check:** after rendering, view the image and compare it with the data: heights, openings and colours. If the picture shows a mistake in the rendering, fix the script and render again. If it shows a mistake in the design, say so; in steps 2 and 4, fix your own schematic.
 
 ## Run folder
 Create a folder `swarm-run/` and save every output in it under the file names given in each step. If you can't write files, pass everything in messages instead.
@@ -93,10 +99,10 @@ B1, B2 and B3 each turn the brief into a three-dimensionally accurate, block-by-
 - **Every layer** from y = 0 to y = H-1, drawn as a character map: D rows of W characters, north row first and west column first. Each layer gets a short note on what is in it. Identical consecutive layers may be written once, as "y = 3..5".
 - **Completeness:** every block, every opening and every interior detail.
 
-They may render a picture of their own schematic with their tools to check it. Save to `02-schematics/B1.md`, `B2.md`, `B3.md`.
+Each builder also generates an image of its schematic (see "How agents make images"), views it, and fixes the schematic wherever the picture shows a mistake. Save to `02-schematics/B1.md` and `02-schematics/B1.png`, and the same for B2 and B3.
 
 ## Step 3: trade and critique (group 2)
-Each builder receives the other two schematics: B1 gets B2's and B3's, and so on. In parallel, each critiques both against the brief. A critique covers:
+Each builder receives the other two schematics with their images: B1 gets B2's and B3's, and so on. In parallel, each views the images and critiques both schematics against the brief. A critique covers:
 - wrong coordinates and blocks outside the volume;
 - missing, floating or unsupported parts;
 - broken doors or beds, and wrong or invalid block IDs;
@@ -107,15 +113,15 @@ Each builder receives the other two schematics: B1 gets B2's and B3's, and so on
 There is one critique per schematic received. Save to `03-critiques/B1-on-B2.md`, `B1-on-B3.md` and so on.
 
 ## Step 4: improve your own (group 2)
-In parallel, each builder gets the two critiques of its own schematic and produces an improved, complete schematic in the same format (a full schematic, not a list of changes). Save to `04-improved/B1.md`, `B2.md`, `B3.md`.
+In parallel, each builder gets the two critiques of its own schematic and produces an improved, complete schematic in the same format (a full schematic, not a list of changes). It generates a new image of the improved schematic, views it, and fixes any mistake it shows. Save to `04-improved/B1.md` and `04-improved/B1.png`, and the same for B2 and B3.
 
 ## Step 5: discuss and vote (group 3)
-1. **Assessments.** C1, C2 and C3 each get the brief and the three improved schematics. The schematics are labelled Schematic 1, 2 and 3, not by author. In parallel, each writes an assessment of every schematic:
+1. **Assessments.** C1, C2 and C3 each get the brief and the three improved schematics with their images. The schematics are labelled Schematic 1, 2 and 3, not by author. In parallel, each views the images and writes an assessment of every schematic:
    - accuracy to the brief;
    - 3D consistency and buildability;
    - design quality.
 
-   They may render the schematics to inspect them. Save to `05-vote/C1-assessment.md` and so on.
+   Save to `05-vote/C1-assessment.md` and so on.
 2. **Discussion.** In parallel, each judge reads the other two assessments and replies to them, saying where it agrees or disagrees and why. It then casts one vote for the most accurate, buildable 3D schematic. Save to `05-vote/C1-vote.md` and so on.
 3. **Result.** The majority wins.
    - If all three vote differently, run one more discussion round with all votes and reasons visible, and vote again.
@@ -124,8 +130,8 @@ In parallel, each builder gets the two critiques of its own schematic and produc
    Record the result in `05-vote/result.md`.
 
 ## Step 6: check against the initial prompt and final tweaks (group 1)
-1. **Reviews.** In parallel, A1, A2 and A3 each check the chosen schematic layer by layer against the brief and BUILD REQUEST. Each lists every fix needed, with exact coordinates and block IDs. Save to `06-final/A1-review.md` and so on.
-2. **Final schematic.** A1 applies the fixes, makes the final tweaks and writes the complete final schematic. Save to `06-final/final-schematic.md`.
+1. **Reviews.** In parallel, A1, A2 and A3 each view the chosen schematic's image and check the schematic layer by layer against the brief and BUILD REQUEST. Each lists every fix needed, with exact coordinates and block IDs. Save to `06-final/A1-review.md` and so on.
+2. **Final schematic.** A1 applies the fixes, makes the final tweaks and writes the complete final schematic. It then generates an image of the final schematic, views it, and corrects anything that doesn't match the brief. Save to `06-final/final-schematic.md` and `06-final/final-schematic.png`.
 
 ## Step 7: six 3D arrays (groups 1 and 2)
 A1, A2, A3, B1, B2 and B3 each convert the final schematic into a 3D array of Minecraft blocks, using the format above.
@@ -152,21 +158,13 @@ Procedure:
 ## Step 8b: blind visual reconstructions (group 3)
 1. **Shuffle.** Put the seven arrays (the six from step 7 plus the consensus) in a random order and label them Option A to G. Save copies as `09-images/option-A.json` through `option-G.json`.
 2. **Keep the key secret.** Keep which label is which array to yourself until the final report. Don't write it in the run folder and don't tell any agent.
-3. **Blind.** Give group 3 only the option files and the rendering rules below. Don't give them the brief, the request, the schematics or the sources; that is what makes the reconstruction blind.
+3. **Blind.** Give group 3 only the option files and "How agents make images". Don't give them the brief, the request, the schematics or the sources; that is what makes the reconstruction blind.
+4. **Images.** In parallel, the judges each generate a visual 3D reconstruction of their arrays, following "How agents make images". Each image shows exactly its array and nothing else.
+   - C1 makes A, B and C.
+   - C2 makes D and E.
+   - C3 makes F and G.
 
-Rendering rules:
-- **Who renders what:** C1 renders A, B and C; C2 renders D and E; C3 renders F and G. They work in parallel.
-- **Exact:** each image is a visual 3D reconstruction of exactly its array. Every non-air block is a cube at its exact position, and nothing is added, smoothed or "fixed".
-- **Same settings for all seven,** so they can be compared:
-  - 1600 × 900 pixels, light grey background;
-  - two isometric views side by side: on the left the front, seen from the south-east; on the right the back, seen from the north-west;
-  - the outline of the volume's floor drawn in;
-  - each block a solid colour close to its real Minecraft colour, the same colour for the same block in every image;
-  - top faces lighter and sides darker; glass semi-transparent.
-- **Tools:** use an image-generation tool only if it can reproduce the array exactly. Otherwise (normally), render with code, for example Python with matplotlib or Pillow.
-- **Check:** after rendering, look at the image and compare it with the array: heights, openings and colours. Fix and re-render if anything is wrong.
-
-Save to `09-images/option-A.png` through `option-G.png`.
+   Save to `09-images/option-A.png` through `option-G.png`.
 
 ## Step 9: ranking (all nine agents)
 All nine agents, in parallel, view the seven images (Option A to G) and rank their top three. The criteria are:
