@@ -158,5 +158,7 @@ The rule is applied when you press Generate, so you can switch rules after previ
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | What changed, version by version |
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | A self-contained briefing for continuing the project in a new chat or session |
 | [`docs/big-swarm-prompt.md`](docs/big-swarm-prompt.md) | A standalone prompt for testing the Big Swarm idea in another Claude chat (32³ max, ends in an image) |
+| [`docs/big-swarm-prompt-v2.md`](docs/big-swarm-prompt-v2.md) | Version 2 of the test prompt: designer–builder pairs, image-generator first drafts, judging on four criteria, then improvement votes by all nine |
+| [`docs/swarm-runs/`](docs/swarm-runs/) | Records of test runs: every message, answer and image |
 
 Quick start for developers (Java 25): `./gradlew build` compiles the mod, runs the automated tests and writes the jar to `build/libs/`.
