@@ -157,5 +157,6 @@ The rule is applied when you press Generate, so you can switch rules after previ
 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Developers: building, testing, how it works, and notes on Minecraft 26.3 APIs |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | What changed, version by version |
 | [`docs/HANDOFF.md`](docs/HANDOFF.md) | A self-contained briefing for continuing the project in a new chat or session |
+| [`docs/big-swarm-prompt.md`](docs/big-swarm-prompt.md) | A standalone prompt for testing the Big Swarm idea in another Claude chat (32³ max, ends in an image) |
 
 Quick start for developers (Java 25): `./gradlew build` compiles the mod, runs the automated tests and writes the jar to `build/libs/`.
